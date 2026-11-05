@@ -15,6 +15,7 @@ export SitePercolation, BondPercolation
 export Permanent, Persistent
 export FixedRight, GrowingRight
 export PowerLawTarget
+export RandomSeeds, BlockSeeds
 export SOPModel, SOPResult
 export simulate, ensemble, stationary_mean, neighbors
 

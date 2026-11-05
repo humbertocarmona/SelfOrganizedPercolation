@@ -54,6 +54,53 @@ end
     @test all(x.p == y.p && x.f == y.f for (x, y) in zip(a, b))
 end
 
+@testset "ensemble with mixed return types" begin
+    m = SOPModel(SquareLattice(32); seeds=4, f_T=0.25, p0=0.7, tmax=20)
+    r = ensemble(m, 6; f=x -> isodd(length(x.p)) ? nothing : 1, ntasks=1)
+    @test length(r) == 6
+    mixed = ensemble(m, 4; f=x -> x.mass[1] > 0 ? (x.mass[1] % 2 == 0 ? nothing : 1) : nothing)
+    @test length(mixed) == 4
+    @test ensemble(m, 3; f=x -> 1.0) isa Vector{Float64}
+end
+
+@testset "seed layouts" begin
+    m = SOPModel(SquareLattice(64); seeds=32, layout=BlockSeeds(4), c=0.0, p0=0.0, tmax=1)
+    st = SelfOrganizedPercolation.initial_state(m, Xoshiro(1))
+    wall = findall(!=(EMPTY), st.sites[1:64])
+    @test wall == vcat(5:12, 21:28, 37:44, 53:60)          # equal blocks and gaps
+    @test wall[1] > 1 && wall[end] < 64                    # away from the periodic edge
+    @test_throws ArgumentError SOPModel(SquareLattice(64); seeds=30, layout=BlockSeeds(4))
+    @test_throws ArgumentError SOPModel(SquareLattice(64); species=2, seeds=8, layout=BlockSeeds(4))
+    # The default layout gives the same run as before the option existed.
+    a = simulate(SOPModel(SquareLattice(64); seeds=20, p0=0.7, tmax=50); rng=Xoshiro(1))
+    b = simulate(SOPModel(SquareLattice(64); seeds=20, p0=0.7, tmax=50, layout=RandomSeeds()); rng=Xoshiro(1))
+    @test a.p == b.p
+end
+
+@testset "arrival times" begin
+    for rej in (Permanent(), Persistent()), right in (FixedRight(40), GrowingRight(8))
+        m = SOPModel(SquareLattice(64); rejection=rej, right, seeds=20, c=0.1, f_T=0.3, p0=0.8, tmax=300)
+        plain = simulate(m; rng=Xoshiro(3), keep_sites=true)
+        r = simulate(m; rng=Xoshiro(3), keep_sites=true, keep_times=true)
+        @test r.p == plain.p && r.sites == plain.sites          # recording changes nothing
+        @test size(r.times) == size(r.sites)
+        @test all((r.times .>= 0) .== (r.sites .!= 0))
+        @test count(==(0), r.times) == 20
+        for t in 1:size(r.f, 1)
+            @test count(==(t), r.times) == round(Int, r.f[t, 1] * 64)
+        end
+        # Every filled site has a neighbor filled exactly one step earlier, unless it
+        # was reached through a throat that waited, which only memory allows.
+        if rej isa Permanent
+            W, nx = size(r.times)
+            for i in eachindex(r.times)
+                r.times[i] > 0 || continue
+                @test any(j -> j != 0 && r.times[j] == r.times[i] - 1, neighbors(m.lattice, i, nx, false))
+            end
+        end
+    end
+end
+
 @testset "limits of static percolation" begin
     for perc in (SitePercolation(), BondPercolation())
         full = SOPModel(SquareLattice(32); percolation=perc, seeds=32, c=0.0, p0=1.0)
@@ -86,7 +133,7 @@ end
     rng = Xoshiro(5)
     n = 30000
     st = State(UInt8[0], UInt8[], 1, [Int[], Int[]], [Int[], Int[]], Tuple{Int,Int}[],
-        [Threshold[], Threshold[]], [1.0, 1.0], [0, 0], [false, false], 0)
+        [Threshold[], Threshold[]], [1.0, 1.0], [0, 0], [false, false], 0, Int32[], Int32(0))
     for _ in 1:n
         st.sites[1] = EMPTY
         append!(st.candidates, [(1, 1), (1, 1), (1, 2)])

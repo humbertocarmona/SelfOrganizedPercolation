@@ -29,6 +29,20 @@ struct GrowingRight
 end
 GrowingRight(initial::Integer; maxlength::Integer=typemax(Int)) = GrowingRight(initial, maxlength)
 
+"Seeds at random positions on the left wall."
+struct RandomSeeds end
+
+"""
+    BlockSeeds(blocks)
+
+Seeds in `blocks` equal blocks, evenly spaced along the left wall. The blocks are
+centered in equal cells, so none wraps across a periodic boundary. With as many seeds
+as half the wall, blocks and gaps alternate like a column of a chessboard.
+"""
+struct BlockSeeds
+    blocks::Int
+end
+
 initial_length(r::FixedRight) = r.length
 initial_length(r::GrowingRight) = r.initial
 
@@ -62,13 +76,14 @@ convert as `c = k A` and `f_T = N_T / A`.
 - `periodic`: periodic transverse boundaries (default `false`, as in the paper).
 - `species`: number of immiscible fluids.
 - `seeds`: inhabited sites per species on the left wall.
+- `layout`: `RandomSeeds()` (default) or `BlockSeeds(blocks)`.
 - `active_fraction`: fraction of those seeds that start active.
 - `p0`: initial probability; a number or one value per species.
 - `c`: feedback strength in `p(t+1) = p(t) + c[f_T - f(t)]`.
 - `f_T`: target fraction of active sites, a number or a callable of `t`.
 - `tmax`: maximum number of time steps.
 """
-struct SOPModel{L<:Lattice,P<:Percolation,R<:Rejection,B,T}
+struct SOPModel{L<:Lattice,P<:Percolation,R<:Rejection,B,T,S}
     lattice::L
     percolation::P
     rejection::R
@@ -81,22 +96,27 @@ struct SOPModel{L<:Lattice,P<:Percolation,R<:Rejection,B,T}
     c::Float64
     f_T::T
     tmax::Int
+    layout::S
 end
 
 function SOPModel(lattice::Lattice; percolation=BondPercolation(), rejection=Permanent(),
         right=FixedRight(transverse_sites(lattice)), periodic=false, species=1, seeds=100,
-        active_fraction=1.0, p0=1.0, c=0.05, f_T=0.1, tmax=typemax(Int))
+        active_fraction=1.0, p0=1.0, c=0.05, f_T=0.1, tmax=typemax(Int), layout=RandomSeeds())
     W = transverse_sites(lattice)
     W >= 3 || throw(ArgumentError("the transverse size must be at least 3"))
     1 <= species <= 254 || throw(ArgumentError("species must be between 1 and 254"))
     percolation isa SitePercolation && species > 8 &&
         throw(ArgumentError("site percolation supports at most 8 species"))
     species * seeds <= W || throw(ArgumentError("the left wall has too few sites for the seeds"))
+    if layout isa BlockSeeds
+        species == 1 || throw(ArgumentError("BlockSeeds supports one species"))
+        seeds % layout.blocks == 0 || throw(ArgumentError("seeds must divide evenly into the blocks"))
+    end
     0 <= active_fraction <= 1 || throw(ArgumentError("active_fraction must be in [0, 1]"))
     probabilities = p0 isa Real ? fill(Float64(p0), species) : Float64.(collect(p0))
     length(probabilities) == species || throw(ArgumentError("p0 needs one value per species"))
     all(p -> 0 <= p <= 1, probabilities) || throw(ArgumentError("p0 must be in [0, 1]"))
     initial_length(right) >= 2 || throw(ArgumentError("the initial length must be at least 2"))
     return SOPModel(lattice, percolation, rejection, right, periodic, species, seeds,
-        Float64(active_fraction), probabilities, Float64(c), _target(f_T), tmax)
+        Float64(active_fraction), probabilities, Float64(c), _target(f_T), tmax, layout)
 end

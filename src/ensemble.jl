@@ -8,10 +8,8 @@ depend on `ntasks`. Use `f` to keep a summary instead of the full time series.
 function ensemble(m::SOPModel, n::Integer; seed::Integer=1, ntasks::Integer=Threads.nthreads(), f=identity)
     n >= 1 || throw(ArgumentError("n must be positive"))
     run(i) = f(simulate(m; rng=Xoshiro(seed + i - 1)))
-    first_result = run(1)
-    results = Vector{typeof(first_result)}(undef, n)
-    results[1] = first_result
-    next = Threads.Atomic{Int}(2)
+    results = Vector{Any}(undef, n)
+    next = Threads.Atomic{Int}(1)
     @sync for _ in 1:min(ntasks, n)
         Threads.@spawn while true
             i = Threads.atomic_add!(next, 1)
@@ -19,7 +17,8 @@ function ensemble(m::SOPModel, n::Integer; seed::Integer=1, ntasks::Integer=Thre
             results[i] = run(i)
         end
     end
-    return results
+    # Narrow the element type, which may be a union if `f` returns different types.
+    return identity.(results)
 end
 
 """

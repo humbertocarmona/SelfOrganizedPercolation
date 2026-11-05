@@ -6,7 +6,9 @@ Outcome of one run. `p[t+1, s]` is the probability used by species `s` at time
 area, `N/L^(d-1)`.
 
 `status` is `:extinct`, `:spanned`, `:tmax` or `:maxlength`. `sites` is the
-lattice (`0` empty, `s` for species `s`) with `keep_sites=true`.
+lattice (`0` empty, `s` for species `s`) with `keep_sites=true`. `times` is the
+arrival time of each site with `keep_times=true`: `t + 1` for a site filled at
+time `t`, `0` for a seed, and `-1` for a site never filled.
 """
 struct SOPResult
     p::Matrix{Float64}
@@ -15,6 +17,7 @@ struct SOPResult
     mass::Vector{Int}
     length::Int
     sites::Union{Nothing,Matrix{UInt8}}
+    times::Union{Nothing,Matrix{Int32}}
 end
 
 mutable struct State
@@ -29,24 +32,36 @@ mutable struct State
     mass::Vector{Int}
     reached::Vector{Bool}
     xmax::Int                      # rightmost occupied column, 0-based
+    times::Vector{Int32}           # arrival times; empty unless they are requested
+    step::Int32                    # value recorded for the sites filled in this step
 end
 
-function initial_state(m::SOPModel, rng)
+wall_order(::RandomSeeds, m, W, rng) = randperm(rng, W)
+
+function wall_order(l::BlockSeeds, m, W, rng)
+    width = m.seeds ÷ l.blocks
+    cell = W / l.blocks
+    return [round(Int, (i - 0.5) * cell - width / 2) + j for i in 1:l.blocks for j in 1:width]
+end
+
+function initial_state(m::SOPModel, rng; keep_times::Bool=false)
     W = transverse_sites(m.lattice)
     nx = initial_length(m.right)
     sites = zeros(UInt8, W * nx)
+    times = keep_times ? fill(Int32(-1), W * nx) : Int32[]
     tested = m.percolation isa SitePercolation ? zeros(UInt8, W * nx) : UInt8[]
     fronts = [Int[] for _ in 1:m.species]
-    wall = randperm(rng, W)
+    wall = wall_order(m.layout, m, W, rng)
     nactive = round(Int, m.active_fraction * m.seeds)
     for s in 1:m.species, n in 1:m.seeds
         site = wall[(s-1)*m.seeds+n]
         sites[site] = UInt8(s)
+        keep_times && (times[site] = 0)
         n <= nactive && push!(fronts[s], site)
     end
     return State(sites, tested, nx, fronts, [Int[] for _ in 1:m.species], Tuple{Int,Int}[],
         [Threshold[] for _ in 1:m.species], copy(m.p0), fill(m.seeds, m.species),
-        fill(false, m.species), 0)
+        fill(false, m.species), 0, times, Int32(0))
 end
 
 function extend!(st::State, W::Int, nx::Int)
@@ -57,6 +72,10 @@ function extend!(st::State, W::Int, nx::Int)
     if !isempty(st.tested)
         resize!(st.tested, new)
         fill!(view(st.tested, old+1:new), 0x00)
+    end
+    if !isempty(st.times)
+        resize!(st.times, new)
+        fill!(view(st.times, old+1:new), Int32(-1))
     end
     st.nx = nx
     return st
@@ -111,6 +130,7 @@ function resolve!(st::State, W::Int, rng)
     @inbounds for (j, s) in st.candidates
         st.sites[j] == EMPTY || continue
         st.sites[j] = UInt8(s)
+        isempty(st.times) || (st.times[j] = st.step)
         push!(st.next[s], j)
         st.xmax = max(st.xmax, (j - 1) ÷ W)
     end
@@ -146,6 +166,7 @@ function evolve!(st::State, m::SOPModel, rng, phist, Nhist)
     while t < m.tmax
         status = prepare_right!(st, m.right, W)
         status === :running || break
+        st.step = Int32(t + 1)
         for s in 1:ns
             push!(phist, st.p[s])
             propose!(st, m, s, rng)
@@ -175,12 +196,12 @@ function evolve!(st::State, m::SOPModel, rng, phist, Nhist)
 end
 
 """
-    simulate(model; rng=Xoshiro(), keep_sites=false)
+    simulate(model; rng=Xoshiro(), keep_sites=false, keep_times=false)
 
 Runs one realization and returns a [`SOPResult`](@ref).
 """
-function simulate(m::SOPModel; rng=Xoshiro(), keep_sites::Bool=false)
-    st = initial_state(m, rng)
+function simulate(m::SOPModel; rng=Xoshiro(), keep_sites::Bool=false, keep_times::Bool=false)
+    st = initial_state(m, rng; keep_times)
     phist = Float64[]
     Nhist = Int[]
     status = evolve!(st, m, rng, phist, Nhist)
@@ -189,5 +210,6 @@ function simulate(m::SOPModel; rng=Xoshiro(), keep_sites::Bool=false)
     W = transverse_sites(m.lattice)
     f = permutedims(reshape(Nhist ./ W, ns, :))
     sites = keep_sites ? reshape(st.sites, W, st.nx) : nothing
-    return SOPResult(p, f, status, st.mass, st.xmax + 1, sites)
+    times = keep_times ? reshape(st.times, W, st.nx) : nothing
+    return SOPResult(p, f, status, st.mass, st.xmax + 1, sites, times)
 end
