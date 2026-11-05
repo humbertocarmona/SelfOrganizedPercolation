@@ -2,15 +2,15 @@ const EMPTY = 0x00
 
 """
 Outcome of one run. `p[t+1, s]` is the probability used by species `s` at time
-`t`, and `N[t+1, s]` is the number of sites it occupied in that step, so these
-are the paper's `p(t)` and `N(t)`.
+`t`, and `f[t+1, s]` is the number of sites it occupied in that step per unit wall
+area, `N/L^(d-1)`.
 
 `status` is `:extinct`, `:spanned`, `:tmax` or `:maxlength`. `sites` is the
 lattice (`0` empty, `s` for species `s`) with `keep_sites=true`.
 """
 struct SOPResult
     p::Matrix{Float64}
-    N::Matrix{Int}
+    f::Matrix{Float64}
     status::Symbol
     mass::Vector{Int}
     length::Int
@@ -151,13 +151,13 @@ function evolve!(st::State, m::SOPModel, rng, phist, Nhist)
             propose!(st, m, s, rng)
         end
         resolve!(st, W, rng)
-        target = m.target(t)
+        target = m.f_T(t)
         for s in 1:ns
             front = st.next[s]
             N = length(front)
             push!(Nhist, N)
             st.mass[s] += N
-            st.p[s] = clamp(st.p[s] + m.k * (target - N), 0.0, 1.0)
+            st.p[s] = clamp(st.p[s] + m.c * (target - N / W), 0.0, 1.0)
             if !st.reached[s]
                 @inbounds for j in front
                     (j - 1) ÷ W == st.nx - 1 && (st.reached[s] = true; break)
@@ -186,7 +186,8 @@ function simulate(m::SOPModel; rng=Xoshiro(), keep_sites::Bool=false)
     status = evolve!(st, m, rng, phist, Nhist)
     ns = m.species
     p = permutedims(reshape(phist, ns, :))
-    N = permutedims(reshape(Nhist, ns, :))
-    sites = keep_sites ? reshape(st.sites, transverse_sites(m.lattice), st.nx) : nothing
-    return SOPResult(p, N, status, st.mass, st.xmax + 1, sites)
+    W = transverse_sites(m.lattice)
+    f = permutedims(reshape(Nhist ./ W, ns, :))
+    sites = keep_sites ? reshape(st.sites, W, st.nx) : nothing
+    return SOPResult(p, f, status, st.mass, st.xmax + 1, sites)
 end

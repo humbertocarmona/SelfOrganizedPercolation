@@ -59,18 +59,22 @@ function transient_row(label, model, reference; n=200)
         mean(x[2] for x in alive), mean(x[3] for x in alive), mean(x[4] for x in alive), mean(x[5] for x in alive))
 end
 
+# These helpers take the paper's k and N_T and convert them to c = k L and f_T = N_T / L.
+reduced(target::Real, W) = target / W
+reduced(target::PowerLawTarget, W) = PowerLawTarget(target.a / W, target.α)
+
 site(; p0, k=1e-4, target=200, tmax=1000, kw...) = SOPModel(SquareLattice(L);
-    percolation=SitePercolation(), p0, k, target, tmax, seeds=100, kw...)
+    percolation=SitePercolation(), p0, c=k * L, f_T=reduced(target, L), tmax, seeds=100, kw...)
 bond(; p0, k=1e-4, target=200, tmax=1000, kw...) = SOPModel(SquareLattice(L);
-    percolation=BondPercolation(), p0, k, target, tmax, seeds=100, kw...)
+    percolation=BondPercolation(), p0, c=k * L, f_T=reduced(target, L), tmax, seeds=100, kw...)
 
 # ---- Fig. 1: cluster, bond percolation, L = 1000, p0 = 1, k = 1e-5, N_T = 200
 fig1 = SOPModel(SquareLattice(1000); percolation=BondPercolation(), seeds=100, p0=1.0,
-    k=1e-5, target=200)
+    c=1e-5 * 1000, f_T=200 / 1000)
 r1 = simulate(fig1; rng=Xoshiro(1), keep_sites=true)
 f = Figure(size=(760, 700), backgroundcolor=:white)
 ax = Axis(f[1, 1]; aspect=DataAspect(), xlabel="x, injection direction", ylabel="y",
-    title="Fig. 1: bond percolation, L = 1000, p₀ = 1, k = 10⁻⁵, N_T = 200, 100 seeds")
+    title="Fig. 1: bond percolation, L = 1000, p₀ = 1, c = 0.01, f_T = 0.2, 100 seeds")
 heatmap!(ax, 1:1000, 1:1000, permutedims(Float64.(r1.sites .!= 0));
     colormap=[colorant"#ffffff", colorant"#0b0b0b"], colorrange=(0, 1), interpolate=false)
 save(joinpath(OUT, "fig1_cluster.png"), f; px_per_unit=2)
@@ -88,24 +92,24 @@ function fig2panel!(slot, title, pc, ps, build)
     return ax
 end
 f = Figure(size=(760, 760), backgroundcolor=:white)
-fig2panel!(f[1, 1], "Fig. 2(a): site percolation, L = 2000, k = 10⁻⁴, N_T = 200", 0.59274,
+fig2panel!(f[1, 1], "Fig. 2(a): site percolation, L = 2000, c = 0.2, f_T = 0.1", 0.59274,
     (0.4, 0.8, 1.0), p0 -> site(; p0))
-fig2panel!(f[2, 1], "Fig. 2(b): bond percolation, L = 2000, k = 10⁻⁴, N_T = 200", 0.5,
+fig2panel!(f[2, 1], "Fig. 2(b): bond percolation, L = 2000, c = 0.2, f_T = 0.1", 0.5,
     (0.3, 0.7, 1.0), p0 -> bond(; p0))
 save(joinpath(OUT, "fig2_probability.png"), f; px_per_unit=2)
 
-# ---- Fig. 3: N(t). The paper does not state the lattice or p0 for this figure:
+# ---- Fig. 3: f(t). The paper does not state the lattice or p0 for this figure:
 # site percolation, L = 2000 and p0 = 1 are assumptions.
-cases = ((300, 1e-3, "(a) N_T = 300, k = 10⁻³"), (200, 1e-4, "(b) N_T = 200, k = 10⁻⁴"),
-    (100, 1e-5, "(c) N_T = 100, k = 10⁻⁵"))
+cases = ((300, 1e-3, "(a) f_T = 0.15, c = 2"), (200, 1e-4, "(b) f_T = 0.1, c = 0.2"),
+    (100, 1e-5, "(c) f_T = 0.05, c = 0.02"))
 f = Figure(size=(760, 460), backgroundcolor=:white)
 ax = Axis(f[1, 1]; title="Fig. 3: active sites (site percolation, L = 2000, p₀ = 1 assumed)",
-    xlabel="time", ylabel="N", limits=(0, 2000, 0, 900))
+    xlabel="time", ylabel="f", limits=(0, 2000, 0, 0.45))
 for (i, (NT, k, label)) in enumerate(cases)
     r = survivor(site(; p0=1.0, k, target=NT, tmax=2000), 20 + i)
-    lines!(ax, 0:size(r.N, 1)-1, r.N[:, 1]; color=COLORS[i], linewidth=1, label)
-    println("Fig. 3 ", label, ": ", r.status, ", steps ", size(r.N, 1),
-        ", std(N) ", round(std(r.N[min(TBURN, end ÷ 2):end, 1]); digits=1))
+    lines!(ax, 0:size(r.f, 1)-1, r.f[:, 1]; color=COLORS[i], linewidth=1, label)
+    println("Fig. 3 ", label, ": ", r.status, ", steps ", size(r.f, 1),
+        ", std(f) ", round(std(r.f[min(TBURN, end ÷ 2):end, 1]); digits=4))
 end
 axislegend(ax; framevisible=false, position=:rt)
 save(joinpath(OUT, "fig3_active_sites.png"), f; px_per_unit=2)
@@ -114,11 +118,11 @@ save(joinpath(OUT, "fig3_active_sites.png"), f; px_per_unit=2)
 m4 = site(; p0=0.8, target=PowerLawTarget(10, 0.5), tmax=2000)
 r4 = survivor(m4, 30)
 f = Figure(size=(760, 760), backgroundcolor=:white)
-ax = Axis(f[1, 1]; title="Fig. 4(a): active sites against the target N_T(t) = 10 t^(1/2)",
-    xlabel="time", ylabel="N", limits=(0, 2000, 0, 600))
-t = 0:size(r4.N, 1)-1
-lines!(ax, t, r4.N[:, 1]; color=BLUE, linewidth=1, label="N(t)")
-lines!(ax, t, 10 .* sqrt.(t); color=INK, linewidth=2, label="N_T(t)")
+ax = Axis(f[1, 1]; title="Fig. 4(a): active fraction against the target f_T(t) = 0.005 t^(1/2)",
+    xlabel="time", ylabel="f", limits=(0, 2000, 0, 0.3))
+t = 0:size(r4.f, 1)-1
+lines!(ax, t, r4.f[:, 1]; color=BLUE, linewidth=1, label="f(t)")
+lines!(ax, t, 0.005 .* sqrt.(t); color=INK, linewidth=2, label="f_T(t)")
 axislegend(ax; framevisible=false, position=:lt)
 ax = Axis(f[2, 1]; title="Fig. 4(b): occupation probability", xlabel="time", ylabel="p",
     limits=(0, 2000, 0.4, 0.9))

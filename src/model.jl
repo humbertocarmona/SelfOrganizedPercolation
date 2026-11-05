@@ -32,14 +32,14 @@ GrowingRight(initial::Integer; maxlength::Integer=typemax(Int)) = GrowingRight(i
 initial_length(r::FixedRight) = r.length
 initial_length(r::GrowingRight) = r.initial
 
-"Time-dependent target `N_T(t) = a t^α`, Eq. (4) of the 1997 paper."
+"Time-dependent target `f_T(t) = a t^α`, the reduced form of Eq. (4) of the 1997 paper."
 struct PowerLawTarget
     a::Float64
     α::Float64
 end
 (f::PowerLawTarget)(t) = f.a * Float64(t)^f.α
 
-"Constant target number of active sites."
+"Constant target fraction of active sites."
 struct ConstantTarget
     value::Float64
 end
@@ -51,6 +51,10 @@ _target(f) = f
 """
     SOPModel(lattice; kwargs...)
 
+Active sites are measured in units of the wall surface area `A = L^(d-1)`, the value of
+`transverse_sites(lattice)`: `f(t) = N(t)/A`. The parameters of the 1997 paper
+convert as `c = k A` and `f_T = N_T / A`.
+
 # Keywords
 - `percolation`: `SitePercolation()` or `BondPercolation()` (default).
 - `rejection`: `Permanent()` (default) or `Persistent()`.
@@ -60,8 +64,8 @@ _target(f) = f
 - `seeds`: inhabited sites per species on the left wall.
 - `active_fraction`: fraction of those seeds that start active.
 - `p0`: initial probability; a number or one value per species.
-- `k`: kinetic coefficient in `p(t+1) = p(t) + k[N_T - N(t)]`.
-- `target`: `N_T`, a number or a callable of `t`.
+- `c`: feedback strength in `p(t+1) = p(t) + c[f_T - f(t)]`.
+- `f_T`: target fraction of active sites, a number or a callable of `t`.
 - `tmax`: maximum number of time steps.
 """
 struct SOPModel{L<:Lattice,P<:Percolation,R<:Rejection,B,T}
@@ -74,14 +78,14 @@ struct SOPModel{L<:Lattice,P<:Percolation,R<:Rejection,B,T}
     seeds::Int
     active_fraction::Float64
     p0::Vector{Float64}
-    k::Float64
-    target::T
+    c::Float64
+    f_T::T
     tmax::Int
 end
 
 function SOPModel(lattice::Lattice; percolation=BondPercolation(), rejection=Permanent(),
         right=FixedRight(transverse_sites(lattice)), periodic=false, species=1, seeds=100,
-        active_fraction=1.0, p0=1.0, k=1e-4, target=200, tmax=typemax(Int))
+        active_fraction=1.0, p0=1.0, c=0.05, f_T=0.1, tmax=typemax(Int))
     W = transverse_sites(lattice)
     W >= 3 || throw(ArgumentError("the transverse size must be at least 3"))
     1 <= species <= 254 || throw(ArgumentError("species must be between 1 and 254"))
@@ -94,5 +98,5 @@ function SOPModel(lattice::Lattice; percolation=BondPercolation(), rejection=Per
     all(p -> 0 <= p <= 1, probabilities) || throw(ArgumentError("p0 must be in [0, 1]"))
     initial_length(right) >= 2 || throw(ArgumentError("the initial length must be at least 2"))
     return SOPModel(lattice, percolation, rejection, right, periodic, species, seeds,
-        Float64(active_fraction), probabilities, Float64(k), _target(target), tmax)
+        Float64(active_fraction), probabilities, Float64(c), _target(f_T), tmax)
 end

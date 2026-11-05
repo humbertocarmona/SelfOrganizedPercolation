@@ -7,7 +7,7 @@ function plateau(lat, perc, pc, name; n=16)
     # Small target fraction, periodic sides and a right wall that follows the front.
     for fT in (0.2, 0.1, 0.05)
         m = SOPModel(lat; percolation=perc, periodic=true, seeds=W ÷ 5, p0=pc + 0.05,
-            k=0.05 / W, target=fT * W, right=GrowingRight(1024), tmax=8000)
+            c=0.05, f_T=fT, right=GrowingRight(1024), tmax=8000)
         res = ensemble(m, n; f=r -> (r.status, stationary_mean(@view r.p[:, 1]; burn=size(r.p, 1) ÷ 2)))
         alive = [v for (s, v) in res if s !== :extinct]
         @printf("%-22s f_T = %.2f  p* = %.4f ± %.4f   p_c = %.4f   (%d of %d survive)\n", name, fT, mean(alive),
@@ -21,7 +21,7 @@ plateau(TriangularLattice(W), BondPercolation(), 2sin(π / 18), "triangular bond
 
 println("\nPersistent rule, bond, L = 2048, H = 2048, L/20 seeds. C simulator in brackets.")
 for (fT, c, cmean, cpeak) in ((0.05, 0.05, 0.4881, 0.5014), (0.2, 0.05, 0.4943, 0.5058), (0.05, 0.2, 0.4793, 0.5015))
-    m = SOPModel(SquareLattice(2048); rejection=Persistent(), seeds=102, p0=1.0, k=c / 2048, target=fT * 2048)
+    m = SOPModel(SquareLattice(2048); rejection=Persistent(), seeds=102, p0=1.0, c=c, f_T=fT)
     res = ensemble(m, 12; f=r -> begin
         # As in the C code: average once the front has passed a quarter of the lattice.
         P = @view r.p[:, 1]
@@ -32,7 +32,7 @@ for (fT, c, cmean, cpeak) in ((0.05, 0.05, 0.4881, 0.5014), (0.2, 0.05, 0.4943, 
 end
 
 println("\nTwo identical immiscible fluids, bond, square, L = 2048, periodic, f_T = 0.1 each")
-m = SOPModel(SquareLattice(2048); species=2, periodic=true, seeds=205, p0=0.7, k=0.05 / 2048, target=205,
+m = SOPModel(SquareLattice(2048); species=2, periodic=true, seeds=205, p0=0.7, c=0.05, f_T=205 / 2048,
     right=GrowingRight(1024), tmax=8000)
 res = ensemble(m, 32; f=r -> (r.status, vec(mean(@view(r.p[size(r.p, 1)÷2:end, :]); dims=1)), r.mass))
 for (i, (s, ps, mass)) in enumerate(res[1:4])

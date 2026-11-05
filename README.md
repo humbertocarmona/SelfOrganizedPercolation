@@ -7,11 +7,11 @@ with one or more immiscible fluids injected from the left wall.
 using SelfOrganizedPercolation, Random
 
 model = SOPModel(SquareLattice(2000);
-    percolation = SitePercolation(), seeds = 100, p0 = 1.0, k = 1e-4, target = 200, tmax = 1000)
+    percolation = SitePercolation(), seeds = 100, p0 = 1.0, c = 0.2, f_T = 0.1, tmax = 1000)
 
 result = simulate(model; rng = Xoshiro(1))
 result.p        # p(t), one column per fluid
-result.N        # N(t), one column per fluid
+result.f        # f(t) = N(t)/L^(d-1), one column per fluid
 result.status   # :extinct, :spanned, :tmax or :maxlength
 
 means = ensemble(model, 64; f = r -> stationary_mean(@view r.p[:, 1]))   # start with julia -t auto
@@ -27,9 +27,11 @@ means = ensemble(model, 64; f = r -> stationary_mean(@view r.p[:, 1]))   # start
 | `right` | `FixedRight(L)`, `GrowingRight(L0; maxlength)` (the wall moves ahead of the front) |
 | `periodic` | periodic transverse boundaries; `false` matches the 1997 paper |
 | `species` | number of immiscible fluids: up to 254 for bond, 8 for site |
-| `target` | a number, `PowerLawTarget(a, α)`, or any function of `t` |
+| `f_T` | a number, `PowerLawTarget(a, α)`, or any function of `t` |
 
-To convert from the `c`, `f_T` notation, use `k = c / W^(d-1)` and `target = f_T * W^(d-1)`.
+Active sites are measured in units of the wall surface area, so the feedback rule is
+`p(t+1) = p(t) + c[f_T - f(t)]` with `f(t) = N(t)/L^(d-1)`. The parameters of the 1997
+paper convert as `c = k L^(d-1)` and `f_T = N_T / L^(d-1)`.
 
 ## Contested sites
 
