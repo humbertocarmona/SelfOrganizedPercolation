@@ -1,0 +1,6 @@
+[deps]
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+SelfOrganizedPercolation = "0d668863-de5c-44ca-9ff8-a0ce9d43c97a"
+
+[sources]
+SelfOrganizedPercolation = {path = ".."}
