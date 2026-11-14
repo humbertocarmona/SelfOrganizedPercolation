@@ -2,15 +2,15 @@
 Self-organized percolation (Alencar, Andrade & Lucena, PRE 56, R2379, 1997) and
 invasion percolation, with several immiscible fluids injected from the left wall.
 
-Coordinates: `x` is the injection direction (the last, growable dimension) and
-`y` is transverse. Sites are stored column by column, so extending the lattice
-to the right only appends memory.
+Coordinates: `x` is the injection direction (the last, growable dimension); `y`,
+and `z` in three dimensions, are transverse. Sites are stored one wall layer after
+another, so extending the lattice to the right only appends memory.
 """
 module SelfOrganizedPercolation
 
 using Random
 
-export SquareLattice, TriangularLattice
+export SquareLattice, TriangularLattice, CubicLattice
 export SitePercolation, BondPercolation
 export Permanent, Persistent
 export FixedRight, GrowingRight

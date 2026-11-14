@@ -6,7 +6,8 @@ Outcome of one run. `p[t+1, s]` is the probability used by species `s` at time
 area, `N/L^(d-1)`.
 
 `status` is `:extinct`, `:spanned`, `:tmax` or `:maxlength`. `sites` is the
-lattice (`0` empty, `s` for species `s`) with `keep_sites=true`. `times` is the
+lattice (`0` empty, `s` for species `s`) with `keep_sites=true`, of size `(W, L)`,
+or `(ny, nz, L)` for `CubicLattice`. `times` is the
 arrival time of each site with `keep_times=true`: `t + 1` for a site filled at
 time `t`, `0` for a seed, and `-1` for a site never filled.
 """
@@ -16,8 +17,8 @@ struct SOPResult
     status::Symbol
     mass::Vector{Int}
     length::Int
-    sites::Union{Nothing,Matrix{UInt8}}
-    times::Union{Nothing,Matrix{Int32}}
+    sites::Union{Nothing,Array{UInt8}}
+    times::Union{Nothing,Array{Int32}}
 end
 
 mutable struct State
@@ -216,7 +217,8 @@ function simulate(m::SOPModel; rng=Xoshiro(), medium::Medium=Medium(rand(rng, UI
     p = permutedims(reshape(phist, ns, :))
     W = transverse_sites(m.lattice)
     f = permutedims(reshape(Nhist ./ W, ns, :))
-    sites = keep_sites ? reshape(st.sites, W, st.nx) : nothing
-    times = keep_times ? reshape(st.times, W, st.nx) : nothing
+    shape = lattice_shape(m.lattice, st.nx)
+    sites = keep_sites ? reshape(st.sites, shape) : nothing
+    times = keep_times ? reshape(st.times, shape) : nothing
     return SOPResult(p, f, status, st.mass, st.xmax + 1, sites, times)
 end

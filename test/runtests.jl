@@ -3,8 +3,9 @@ using SelfOrganizedPercolation: State, resolve!, EMPTY, heap_push!, heap_pop!, T
 using Random, Test
 
 @testset "lattice geometry" begin
-    for (lat, degree) in ((SquareLattice(7), 4), (TriangularLattice(7), 6), (TriangularLattice(8), 6))
-        W, nx = lat.width, 9
+    for (lat, degree) in ((SquareLattice(7), 4), (TriangularLattice(7), 6), (TriangularLattice(8), 6),
+        (CubicLattice(4, 5), 6), (CubicLattice(3), 6))
+        W, nx = SelfOrganizedPercolation.transverse_sites(lat), 9
         for i in 1:W*nx
             nbrs = filter(!=(0), collect(neighbors(lat, i, nx, true)))
             @test allunique(nbrs)
@@ -22,6 +23,14 @@ using Random, Test
     end
     @test neighbors(SquareLattice(5), 1, 3, false) == (6, 0, 2, 0)
     @test neighbors(SquareLattice(5), 1, 3, true) == (6, 5, 2, 0)
+    # Cubic: y fastest, then z, then x. Site (x, y, z) = (1, 2, 3) on a 4 × 5 wall.
+    c = CubicLattice(4, 5)
+    i = 20 * 1 + 4 * 3 + 2 + 1
+    @test neighbors(c, i, 3, false) == (i + 20, i - 1, i + 1, i - 4, i + 4, i - 20)
+    @test neighbors(c, 1, 3, true) == (21, 4, 2, 17, 5, 0)
+    @test neighbors(c, 1, 3, false) == (21, 0, 2, 0, 5, 0)
+    @test_throws ArgumentError SOPModel(CubicLattice(2, 8); seeds=4)
+    @test_throws ArgumentError IPModel(CubicLattice(8); seeds=8, layout=BlockSeeds(2))
 end
 
 @testset "threshold heap" begin
@@ -202,7 +211,8 @@ end
 
 # Every occupied site must connect to a seed through sites of its own species.
 function connected_to_wall(sites, lat, periodic, s)
-    W, nx = size(sites)
+    nx = size(sites)[end]
+    W = length(sites) ÷ nx
     seen = falses(length(sites))
     stack = [i for i in 1:W if sites[i] == s]
     seen[stack] .= true
@@ -215,7 +225,7 @@ function connected_to_wall(sites, lat, periodic, s)
 end
 
 @testset "immiscible fluids" begin
-    for lat in (SquareLattice(96), TriangularLattice(96)),
+    for lat in (SquareLattice(96), TriangularLattice(96), CubicLattice(12, 8)),
         perc in (SitePercolation(), BondPercolation()),
         rej in (Permanent(), Persistent()), ns in (2, 3)
 
@@ -269,7 +279,7 @@ end
 end
 
 @testset "no type instability in the kernel" begin
-    for lat in (SquareLattice(32), TriangularLattice(32)), rej in (Permanent(), Persistent()),
+    for lat in (SquareLattice(32), TriangularLattice(32), CubicLattice(6)), rej in (Permanent(), Persistent()),
         perc in (SitePercolation(), BondPercolation())
 
         m = SOPModel(lat; percolation=perc, rejection=rej, seeds=4, f_T=0.25, p0=0.7, tmax=20)
@@ -299,8 +309,8 @@ function brute_invasion(lat, W, nx, periodic, seeds, medium, perc, nmax)
 end
 
 @testset "invasion percolation matches the simple algorithm" begin
-    for lat in (SquareLattice(16), TriangularLattice(16)), perc in (SitePercolation(), BondPercolation()),
-        periodic in (false, true)
+    for lat in (SquareLattice(16), TriangularLattice(16), CubicLattice(5, 4)),
+        perc in (SitePercolation(), BondPercolation()), periodic in (false, true)
 
         m = IPModel(lat; percolation=perc, periodic, seeds=5, right=FixedRight(24))
         medium = Medium(3)
@@ -308,7 +318,8 @@ end
         @test r.status === :spanned
         seeds = findall(==(0), vec(r.times))
         order = sortperm(vec(r.times))[length(seeds)+count(<(0), r.times)+1:end]
-        @test order == brute_invasion(lat, 16, 24, periodic, seeds, medium, perc, typemax(Int))
+        W = SelfOrganizedPercolation.transverse_sites(lat)
+        @test order == brute_invasion(lat, W, 24, periodic, seeds, medium, perc, typemax(Int))
         @test r.mass[1] == 5 + length(r.x) == count(!=(EMPTY), r.sites)
         @test r.length == 24
     end
@@ -339,7 +350,7 @@ end
 end
 
 @testset "invasion percolation with several fluids" begin
-    for lat in (SquareLattice(64), TriangularLattice(64)), perc in (SitePercolation(), BondPercolation())
+    for lat in (SquareLattice(64), TriangularLattice(64), CubicLattice(10, 8)), perc in (SitePercolation(), BondPercolation())
         m = IPModel(lat; percolation=perc, species=3, seeds=8, periodic=true, right=GrowingRight(16), nmax=6000)
         r = simulate(m; rng=Xoshiro(11), keep_sites=true, keep_times=true)
         @test r.status === :nmax
@@ -374,8 +385,39 @@ end
     @test simulate(none; rng=Xoshiro(1)).status === :extinct
     quiet = simulate(IPModel(SquareLattice(32); seeds=4); rng=Xoshiro(1), keep_history=false)
     @test isempty(quiet.x) && quiet.status === :spanned
-    for lat in (SquareLattice(32), TriangularLattice(32)), perc in (SitePercolation(), BondPercolation())
+    for lat in (SquareLattice(32), TriangularLattice(32), CubicLattice(6)), perc in (SitePercolation(), BondPercolation())
         m = IPModel(lat; percolation=perc, species=2, seeds=4, nmax=200)
         @test (@inferred simulate(m; rng=Xoshiro(1))) isa IPResult
+    end
+end
+
+@testset "cubic lattice" begin
+    # Results keep the wall's two dimensions, and the default length is ny.
+    m = SOPModel(CubicLattice(8, 6); seeds=10, p0=0.6, tmax=20)
+    r = simulate(m; rng=Xoshiro(1), keep_sites=true, keep_times=true)
+    @test ndims(r.sites) == 3 && size(r.sites)[1:2] == (8, 6)
+    @test size(r.times) == size(r.sites)
+    @test m.right.length == 8
+    @test count(!=(EMPTY), r.sites) == r.mass[1]
+
+    # IP in the same medium as Persistent SOP, up to its first threshold above p.
+    for (perc, p) in ((SitePercolation(), 0.28), (BondPercolation(), 0.22))   # below p_c
+        medium = Medium(9)
+        sop = SOPModel(CubicLattice(16); percolation=perc, rejection=Persistent(), right=FixedRight(24),
+            seeds=40, c=0.0, p0=p, tmax=2000)
+        ip = IPModel(CubicLattice(16); percolation=perc, right=FixedRight(24), seeds=40)
+        a = simulate(sop; rng=Xoshiro(2), medium, keep_sites=true)
+        b = simulate(ip; rng=Xoshiro(2), medium, keep_times=true)
+        @test a.status === :tmax
+        nstar = findfirst(>=(p), b.x) - 1
+        @test (a.sites .!= EMPTY) == (0 .<= b.times .<= nstar)
+    end
+
+    # Static percolation thresholds: the largest invaded threshold approaches p_c.
+    for (perc, pc) in ((SitePercolation(), 0.3116), (BondPercolation(), 0.2488))
+        m = IPModel(CubicLattice(48); percolation=perc, periodic=true, seeds=48^2)
+        r = simulate(m; rng=Xoshiro(3))
+        @test r.status === :spanned
+        @test abs(maximum(r.x) - pc) < 0.02
     end
 end

@@ -66,11 +66,14 @@ _target(f) = f
 function check_injection(lattice, percolation, right, species, seeds, layout, active_fraction)
     W = transverse_sites(lattice)
     W >= 3 || throw(ArgumentError("the transverse size must be at least 3"))
+    lattice isa CubicLattice && min(lattice.ny, lattice.nz) < 3 &&
+        throw(ArgumentError("each transverse size must be at least 3"))
     1 <= species <= 254 || throw(ArgumentError("species must be between 1 and 254"))
     percolation isa SitePercolation && species > 8 &&
         throw(ArgumentError("site percolation supports at most 8 species"))
     species * seeds <= W || throw(ArgumentError("the left wall has too few sites for the seeds"))
     if layout isa BlockSeeds
+        lattice isa CubicLattice && throw(ArgumentError("BlockSeeds supports two-dimensional lattices"))
         species == 1 || throw(ArgumentError("BlockSeeds supports one species"))
         seeds % layout.blocks == 0 || throw(ArgumentError("seeds must divide evenly into the blocks"))
     end
@@ -89,7 +92,7 @@ convert as `c = k A` and `f_T = N_T / A`.
 # Keywords
 - `percolation`: `SitePercolation()` or `BondPercolation()` (default).
 - `rejection`: `Permanent()` (default) or `Persistent()`.
-- `right`: `FixedRight(L)` (default, `L` = lattice width) or `GrowingRight(L0)`.
+- `right`: `FixedRight(L)` (default, `L` = lattice width, `ny` for `CubicLattice`) or `GrowingRight(L0)`.
 - `periodic`: periodic transverse boundaries (default `false`, as in the paper).
 - `species`: number of immiscible fluids.
 - `seeds`: inhabited sites per species on the left wall.
@@ -117,7 +120,7 @@ struct SOPModel{L<:Lattice,P<:Percolation,R<:Rejection,B,T,S}
 end
 
 function SOPModel(lattice::Lattice; percolation=BondPercolation(), rejection=Permanent(),
-        right=FixedRight(transverse_sites(lattice)), periodic=false, species=1, seeds=100,
+        right=FixedRight(default_length(lattice)), periodic=false, species=1, seeds=100,
         active_fraction=1.0, p0=1.0, c=0.05, f_T=0.1, tmax=typemax(Int), layout=RandomSeeds())
     check_injection(lattice, percolation, right, species, seeds, layout, active_fraction)
     probabilities = p0 isa Real ? fill(Float64(p0), species) : Float64.(collect(p0))

@@ -15,7 +15,8 @@ heap 16 bytes per perimeter element.
 
 # Keywords
 - `percolation`: `SitePercolation()` or `BondPercolation()` (default).
-- `right`: `FixedRight(L)` (default, `L` = lattice width) stops when a fluid reaches the
+- `right`: `FixedRight(L)` (default, `L` = lattice width, `ny` for
+  `CubicLattice`) stops when a fluid reaches the
   last column; `GrowingRight(L0)` moves the wall ahead of the front.
 - `periodic`, `species`, `seeds`, `layout`, `active_fraction`: as in `SOPModel`.
 - `nmax`: maximum number of invasions.
@@ -33,7 +34,7 @@ struct IPModel{L<:Lattice,P<:Percolation,B,S}
 end
 
 function IPModel(lattice::Lattice; percolation=BondPercolation(),
-        right=FixedRight(transverse_sites(lattice)), periodic=false, species=1, seeds=100,
+        right=FixedRight(default_length(lattice)), periodic=false, species=1, seeds=100,
         active_fraction=1.0, nmax=typemax(Int), layout=RandomSeeds())
     check_injection(lattice, percolation, right, species, seeds, layout, active_fraction)
     nmax >= 0 || throw(ArgumentError("nmax must be non-negative"))
@@ -48,7 +49,7 @@ invaded element and `species[n]` the fluid that invaded it; both are empty unles
 
 `status` is `:spanned` (a fluid reached the last column of a `FixedRight` lattice),
 `:extinct` (no fluid has a perimeter left), `:nmax` or `:maxlength`. `sites` is the
-lattice with `keep_sites=true`. `times` with `keep_times=true` gives the invasion
+lattice with `keep_sites=true`, of size `(W, L)` or `(ny, nz, L)`. `times` with `keep_times=true` gives the invasion
 order: `n` for the site invaded at step `n`, `0` for a seed and `-1` for a site
 never invaded.
 """
@@ -58,8 +59,8 @@ struct IPResult
     status::Symbol
     mass::Vector{Int}
     length::Int
-    sites::Union{Nothing,Matrix{UInt8}}
-    times::Union{Nothing,Matrix{Int32}}
+    sites::Union{Nothing,Array{UInt8}}
+    times::Union{Nothing,Array{Int32}}
 end
 
 mutable struct IPState
@@ -181,8 +182,8 @@ function simulate(m::IPModel; rng=Xoshiro(), medium::Medium=Medium(rand(rng, UIn
     st = initial_state(m, rng, medium, keep_times)
     xs, who = Float64[], UInt8[]
     status = keep_history ? invade!(st, m, rng, xs, who) : invade!(st, m, rng, nothing, nothing)
-    W = transverse_sites(m.lattice)
-    sites = keep_sites ? reshape(st.sites, W, st.nx) : nothing
-    times = keep_times ? reshape(st.times, W, st.nx) : nothing
+    shape = lattice_shape(m.lattice, st.nx)
+    sites = keep_sites ? reshape(st.sites, shape) : nothing
+    times = keep_times ? reshape(st.times, shape) : nothing
     return IPResult(xs, who, status, st.mass, st.xmax + 1, sites, times)
 end

@@ -21,7 +21,7 @@ means = ensemble(model, 64; f = r -> stationary_mean(@view r.p[:, 1]))   # start
 
 | Keyword | Values |
 |---|---|
-| lattice | `SquareLattice(W)`, `TriangularLattice(W)` |
+| lattice | `SquareLattice(W)`, `TriangularLattice(W)`, `CubicLattice(ny, nz)` |
 | `percolation` | `BondPercolation()`, `SitePercolation()` |
 | `rejection` | `Permanent()` (original SOP), `Persistent()` (a rejected throat can open later) |
 | `right` | `FixedRight(L)`, `GrowingRight(L0; maxlength)` (the wall moves ahead of the front) |
@@ -75,10 +75,18 @@ Run with the same `medium` (or the same `rng` seed), `IPModel` and a `Persistent
 `SOPModel` see the same thresholds. Use `keep_history = false` on very large runs.
 `reproduce/invasion.jl` checks the cost per invasion and the fractal dimension.
 
+## Three dimensions
+
+`CubicLattice(ny, nz)` injects through an `ny × nz` wall; `CubicLattice(W)` is a
+`W × W` wall. `f(t)` is measured per wall site, `N(t)/(ny nz)`, and `periodic` wraps
+both transverse directions. `sites` and `times` come back as `ny × nz × L` arrays.
+`BlockSeeds` is two-dimensional only.
+
 ## Adding a lattice
 
-A new lattice needs one type and one `neighbors` method. The 3D cubic lattice goes
-the same way, with `transverse_sites` returning `Wy * Wz`; `x` stays the last index.
+A new lattice needs one type and one `neighbors` method. If its wall is not a line it
+also defines `transverse_sites`, `default_length` and `lattice_shape`, as
+`CubicLattice` does; `x` stays the last index.
 
 ## Reproducing the paper
 

@@ -19,6 +19,18 @@ plateau(SquareLattice(W), BondPercolation(), 0.5, "square bond")
 plateau(TriangularLattice(W), SitePercolation(), 0.5, "triangular site")
 plateau(TriangularLattice(W), BondPercolation(), 2sin(π / 18), "triangular bond")
 
+# Cubic lattice: wall of 128 × 128 sites, p_c from Wang et al., PRE 87, 052107 (2013).
+for (perc, pc, name) in ((SitePercolation(), 0.3116, "cubic site"), (BondPercolation(), 0.2488, "cubic bond"))
+    for fT in (0.2, 0.1, 0.05)
+        m = SOPModel(CubicLattice(128); percolation=perc, periodic=true, seeds=128^2 ÷ 5, p0=pc + 0.05,
+            c=0.05, f_T=fT, right=GrowingRight(256), tmax=3000)
+        res = ensemble(m, 16; f=r -> (r.status, stationary_mean(@view r.p[:, 1])))
+        alive = [v for (s, v) in res if s !== :extinct]
+        @printf("%-22s f_T = %.2f  p* = %.4f ± %.4f   p_c = %.4f   (%d of %d survive)\n", name, fT, mean(alive),
+            std(alive) / sqrt(length(alive)), pc, length(alive), 16)
+    end
+end
+
 println("\nPersistent rule, bond, L = 2048, H = 2048, L/20 seeds. C simulator in brackets.")
 for (fT, c, cmean, cpeak) in ((0.05, 0.05, 0.4881, 0.5014), (0.2, 0.05, 0.4943, 0.5058), (0.05, 0.2, 0.4793, 0.5015))
     m = SOPModel(SquareLattice(2048); rejection=Persistent(), seeds=102, p0=1.0, c=c, f_T=fT)
