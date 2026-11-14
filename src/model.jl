@@ -62,6 +62,23 @@ end
 _target(x::Real) = ConstantTarget(Float64(x))
 _target(f) = f
 
+# Checks shared by every model that injects fluids from the left wall.
+function check_injection(lattice, percolation, right, species, seeds, layout, active_fraction)
+    W = transverse_sites(lattice)
+    W >= 3 || throw(ArgumentError("the transverse size must be at least 3"))
+    1 <= species <= 254 || throw(ArgumentError("species must be between 1 and 254"))
+    percolation isa SitePercolation && species > 8 &&
+        throw(ArgumentError("site percolation supports at most 8 species"))
+    species * seeds <= W || throw(ArgumentError("the left wall has too few sites for the seeds"))
+    if layout isa BlockSeeds
+        species == 1 || throw(ArgumentError("BlockSeeds supports one species"))
+        seeds % layout.blocks == 0 || throw(ArgumentError("seeds must divide evenly into the blocks"))
+    end
+    0 <= active_fraction <= 1 || throw(ArgumentError("active_fraction must be in [0, 1]"))
+    initial_length(right) >= 2 || throw(ArgumentError("the initial length must be at least 2"))
+    return nothing
+end
+
 """
     SOPModel(lattice; kwargs...)
 
@@ -102,21 +119,10 @@ end
 function SOPModel(lattice::Lattice; percolation=BondPercolation(), rejection=Permanent(),
         right=FixedRight(transverse_sites(lattice)), periodic=false, species=1, seeds=100,
         active_fraction=1.0, p0=1.0, c=0.05, f_T=0.1, tmax=typemax(Int), layout=RandomSeeds())
-    W = transverse_sites(lattice)
-    W >= 3 || throw(ArgumentError("the transverse size must be at least 3"))
-    1 <= species <= 254 || throw(ArgumentError("species must be between 1 and 254"))
-    percolation isa SitePercolation && species > 8 &&
-        throw(ArgumentError("site percolation supports at most 8 species"))
-    species * seeds <= W || throw(ArgumentError("the left wall has too few sites for the seeds"))
-    if layout isa BlockSeeds
-        species == 1 || throw(ArgumentError("BlockSeeds supports one species"))
-        seeds % layout.blocks == 0 || throw(ArgumentError("seeds must divide evenly into the blocks"))
-    end
-    0 <= active_fraction <= 1 || throw(ArgumentError("active_fraction must be in [0, 1]"))
+    check_injection(lattice, percolation, right, species, seeds, layout, active_fraction)
     probabilities = p0 isa Real ? fill(Float64(p0), species) : Float64.(collect(p0))
     length(probabilities) == species || throw(ArgumentError("p0 needs one value per species"))
     all(p -> 0 <= p <= 1, probabilities) || throw(ArgumentError("p0 must be in [0, 1]"))
-    initial_length(right) >= 2 || throw(ArgumentError("the initial length must be at least 2"))
     return SOPModel(lattice, percolation, rejection, right, periodic, species, seeds,
         Float64(active_fraction), probabilities, Float64(c), _target(f_T), tmax, layout)
 end

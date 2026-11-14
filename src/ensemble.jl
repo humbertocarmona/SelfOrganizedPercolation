@@ -5,7 +5,7 @@ Runs `n` independent realizations on `ntasks` threads and returns `f(result)` fo
 each. Realization `i` always uses the same random stream, so the output does not
 depend on `ntasks`. Use `f` to keep a summary instead of the full time series.
 """
-function ensemble(m::SOPModel, n::Integer; seed::Integer=1, ntasks::Integer=Threads.nthreads(), f=identity)
+function ensemble(m::Union{SOPModel,IPModel}, n::Integer; seed::Integer=1, ntasks::Integer=Threads.nthreads(), f=identity)
     n >= 1 || throw(ArgumentError("n must be positive"))
     run(i) = f(simulate(m; rng=Xoshiro(seed + i - 1)))
     results = Vector{Any}(undef, n)

@@ -65,7 +65,7 @@ function initial_state(m::SOPModel, rng; keep_times::Bool=false, medium::Medium=
         fill(false, m.species), 0, times, Int32(0), medium)
 end
 
-function extend!(st::State, W::Int, nx::Int)
+function extend!(st, W::Int, nx::Int)
     old = length(st.sites)
     new = W * nx
     resize!(st.sites, new)

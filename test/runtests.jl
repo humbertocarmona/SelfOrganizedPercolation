@@ -276,3 +276,106 @@ end
         @test (@inferred simulate(m; rng=Xoshiro(1))) isa SOPResult
     end
 end
+
+# Invasion percolation by the simple O(MN) algorithm: scan the whole perimeter for
+# the smallest threshold at every step. Returns the sites in invasion order.
+function brute_invasion(lat, W, nx, periodic, seeds, medium, perc, nmax)
+    filled = falses(W * nx)
+    filled[seeds] .= true
+    order = Int[]
+    while length(order) < nmax
+        best, site = Inf, 0
+        for i in findall(filled), j in neighbors(lat, i, nx, periodic)
+            (j == 0 || filled[j]) && continue
+            x = perc isa SitePercolation ? threshold(medium, j) : threshold(medium, i, j)
+            x < best && ((best, site) = (x, j))
+        end
+        site == 0 && break
+        filled[site] = true
+        push!(order, site)
+        (site - 1) ÷ W == nx - 1 && break
+    end
+    return order
+end
+
+@testset "invasion percolation matches the simple algorithm" begin
+    for lat in (SquareLattice(16), TriangularLattice(16)), perc in (SitePercolation(), BondPercolation()),
+        periodic in (false, true)
+
+        m = IPModel(lat; percolation=perc, periodic, seeds=5, right=FixedRight(24))
+        medium = Medium(3)
+        r = simulate(m; rng=Xoshiro(1), medium, keep_sites=true, keep_times=true)
+        @test r.status === :spanned
+        seeds = findall(==(0), vec(r.times))
+        order = sortperm(vec(r.times))[length(seeds)+count(<(0), r.times)+1:end]
+        @test order == brute_invasion(lat, 16, 24, periodic, seeds, medium, perc, typemax(Int))
+        @test r.mass[1] == 5 + length(r.x) == count(!=(EMPTY), r.sites)
+        @test r.length == 24
+    end
+end
+
+@testset "invasion percolation shares the medium with SOP" begin
+    # IP fills every element below p reachable from the seeds before any element above
+    # it, so up to its first threshold above p it has filled exactly the cluster that
+    # Persistent SOP fills at constant p in the same medium.
+    for lat in (SquareLattice(64), TriangularLattice(64)),
+        (perc, p) in ((SitePercolation(), 0.47), (BondPercolation(), 0.32))
+
+        medium = Medium(42)
+        sop = SOPModel(lat; percolation=perc, rejection=Persistent(), right=FixedRight(48),
+            seeds=16, layout=BlockSeeds(4), c=0.0, p0=p, tmax=3000)
+        ip = IPModel(lat; percolation=perc, right=FixedRight(48), seeds=16, layout=BlockSeeds(4))
+        a = simulate(sop; rng=Xoshiro(1), medium, keep_sites=true)
+        b = simulate(ip; rng=Xoshiro(1), medium, keep_times=true)
+        nstar = findfirst(>=(p), b.x) - 1
+        @test (a.sites .!= EMPTY) == (0 .<= b.times .<= nstar)
+    end
+    # With the same seed, both models put the seeds in the same places.
+    sop = SOPModel(SquareLattice(64); rejection=Persistent(), seeds=20, p0=0.0, tmax=1)
+    ip = IPModel(SquareLattice(64); seeds=20, nmax=5)
+    a = simulate(sop; rng=Xoshiro(8), keep_sites=true)
+    b = simulate(ip; rng=Xoshiro(8), keep_times=true)
+    @test findall(==(0), b.times[:, 1]) == findall(!=(EMPTY), a.sites[:, 1])
+end
+
+@testset "invasion percolation with several fluids" begin
+    for lat in (SquareLattice(64), TriangularLattice(64)), perc in (SitePercolation(), BondPercolation())
+        m = IPModel(lat; percolation=perc, species=3, seeds=8, periodic=true, right=GrowingRight(16), nmax=6000)
+        r = simulate(m; rng=Xoshiro(11), keep_sites=true, keep_times=true)
+        @test r.status === :nmax
+        @test length(r.x) == 6000
+        for s in 1:3
+            @test count(==(UInt8(s)), r.sites) == r.mass[s] == 8 + count(==(UInt8(s)), r.species)
+            @test connected_to_wall(r.sites, lat, true, UInt8(s))
+        end
+        @test sort(filter(>(0), vec(r.times))) == 1:6000
+    end
+    # Fluids are picked uniformly, so identical fluids share the medium evenly.
+    m = IPModel(SquareLattice(128); species=2, seeds=30, periodic=true, right=GrowingRight(32), nmax=4000)
+    masses = ensemble(m, 100; f=r -> r.mass)
+    @test abs(sum(x[1] for x in masses) / sum(x[2] for x in masses) - 1) < 0.05
+    # The medium is fixed while rng changes which fluid moves.
+    medium = Medium(1)
+    a = simulate(m; rng=Xoshiro(1), medium, keep_sites=true)
+    b = simulate(m; rng=Xoshiro(2), medium, keep_sites=true)
+    @test a.sites != b.sites
+end
+
+@testset "invasion percolation boundaries" begin
+    m = IPModel(SquareLattice(32); percolation=SitePercolation(), seeds=32, right=GrowingRight(4), nmax=20000)
+    r = simulate(m; rng=Xoshiro(1), keep_sites=true)
+    @test r.status === :nmax
+    @test size(r.sites, 2) > r.length                      # the wall stays ahead
+    capped = IPModel(SquareLattice(32); seeds=32, right=GrowingRight(4; maxlength=16))
+    c = simulate(capped; rng=Xoshiro(1), keep_sites=true)
+    @test c.status === :maxlength
+    @test c.length <= 15 && size(c.sites, 2) == 16
+    none = IPModel(SquareLattice(32); seeds=4, active_fraction=0.0)
+    @test simulate(none; rng=Xoshiro(1)).status === :extinct
+    quiet = simulate(IPModel(SquareLattice(32); seeds=4); rng=Xoshiro(1), keep_history=false)
+    @test isempty(quiet.x) && quiet.status === :spanned
+    for lat in (SquareLattice(32), TriangularLattice(32)), perc in (SitePercolation(), BondPercolation())
+        m = IPModel(lat; percolation=perc, species=2, seeds=4, nmax=200)
+        @test (@inferred simulate(m; rng=Xoshiro(1))) isa IPResult
+    end
+end

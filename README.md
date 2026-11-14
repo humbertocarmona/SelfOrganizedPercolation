@@ -55,6 +55,26 @@ By default the medium is drawn from `rng`, so runs with the same seed (including
 realization `i` of `ensemble`) share it. `Permanent` gives each element one test at
 first contact and still draws it from `rng`.
 
+## Invasion percolation
+
+`IPModel` takes the same lattice, percolation type, boundaries and seeds as `SOPModel`.
+Each step it picks a fluid uniformly at random and invades the smallest threshold on
+that fluid's perimeter. There is no trapping. The perimeter is a binary heap
+(Masson & Pride, *Transp. Porous Med.* 102, 301, 2014), so `M` invasions take
+`O(M log M)` time. Thresholds are hashed rather than stored, so memory is about one
+byte per lattice site plus 16 bytes per perimeter element.
+
+```julia
+ip = IPModel(SquareLattice(4096); percolation = SitePercolation(), periodic = true, seeds = 4096)
+r = simulate(ip; rng = Xoshiro(1), medium = Medium(42))
+r.x         # threshold of each invaded element, in order
+r.status    # :spanned when a fluid reaches the right wall
+```
+
+Run with the same `medium` (or the same `rng` seed), `IPModel` and a `Persistent`
+`SOPModel` see the same thresholds. Use `keep_history = false` on very large runs.
+`reproduce/invasion.jl` checks the cost per invasion and the fractal dimension.
+
 ## Adding a lattice
 
 A new lattice needs one type and one `neighbors` method. The 3D cubic lattice goes
@@ -67,6 +87,7 @@ julia -t auto --project=reproduce -e 'using Pkg; Pkg.develop(path="."); Pkg.inst
 julia -t auto --project=reproduce reproduce/paper1997.jl
 julia -t auto --project=reproduce reproduce/validate_extensions.jl
 julia -t auto --project=reproduce reproduce/benchmark.jl
+julia -t auto --project=reproduce reproduce/invasion.jl
 ```
 
 Figures and `stationary_p.csv` are written to `reproduce/output/`.
