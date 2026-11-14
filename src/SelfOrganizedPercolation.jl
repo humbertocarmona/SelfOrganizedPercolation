@@ -16,11 +16,13 @@ export Permanent, Persistent
 export FixedRight, GrowingRight
 export PowerLawTarget
 export RandomSeeds, BlockSeeds
+export Medium
 export SOPModel, SOPResult
 export simulate, ensemble, stationary_mean, neighbors
 
 include("lattices.jl")
 include("model.jl")
+include("medium.jl")
 include("heap.jl")
 include("simulate.jl")
 include("ensemble.jl")

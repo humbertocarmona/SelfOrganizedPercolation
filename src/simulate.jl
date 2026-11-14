@@ -34,6 +34,7 @@ mutable struct State
     xmax::Int                      # rightmost occupied column, 0-based
     times::Vector{Int32}           # arrival times; empty unless they are requested
     step::Int32                    # value recorded for the sites filled in this step
+    medium::Medium                 # thresholds of the Persistent rule
 end
 
 wall_order(::RandomSeeds, m, W, rng) = randperm(rng, W)
@@ -44,7 +45,7 @@ function wall_order(l::BlockSeeds, m, W, rng)
     return [round(Int, (i - 0.5) * cell - width / 2) + j for i in 1:l.blocks for j in 1:width]
 end
 
-function initial_state(m::SOPModel, rng; keep_times::Bool=false)
+function initial_state(m::SOPModel, rng; keep_times::Bool=false, medium::Medium=Medium(rand(rng, UInt64)))
     W = transverse_sites(m.lattice)
     nx = initial_length(m.right)
     sites = zeros(UInt8, W * nx)
@@ -61,7 +62,7 @@ function initial_state(m::SOPModel, rng; keep_times::Bool=false)
     end
     return State(sites, tested, nx, fronts, [Int[] for _ in 1:m.species], Tuple{Int,Int}[],
         [Threshold[] for _ in 1:m.species], copy(m.p0), fill(m.seeds, m.species),
-        fill(false, m.species), 0, times, Int32(0))
+        fill(false, m.species), 0, times, Int32(0), medium)
 end
 
 function extend!(st::State, W::Int, nx::Int)
@@ -109,7 +110,7 @@ function propose!(st::State, m::SOPModel{<:Any,<:Any,Persistent}, s::Int, rng)
         for j in neighbors(m.lattice, i, st.nx, m.periodic)
             (j == 0 || st.sites[j] != EMPTY) && continue
             first_contact!(st, m.percolation, j, s) || continue
-            heap_push!(heap, (rand(rng), j))
+            heap_push!(heap, (threshold(st.medium, m.percolation, i, j), j))
         end
     end
     @inbounds while !isempty(heap) && heap[1][1] < p
@@ -196,12 +197,18 @@ function evolve!(st::State, m::SOPModel, rng, phist, Nhist)
 end
 
 """
-    simulate(model; rng=Xoshiro(), keep_sites=false, keep_times=false)
+    simulate(model; rng=Xoshiro(), medium=Medium(rand(rng, UInt64)), keep_sites=false, keep_times=false)
 
 Runs one realization and returns a [`SOPResult`](@ref).
+
+The `Persistent` rule reads its thresholds from `medium`. By default the medium is
+the first draw from `rng`, so a seed fixes the medium, and two models run with the
+same seed share it. Pass `medium` to keep the disorder fixed while `rng` varies the
+seed positions and the choice among competing fluids.
 """
-function simulate(m::SOPModel; rng=Xoshiro(), keep_sites::Bool=false, keep_times::Bool=false)
-    st = initial_state(m, rng; keep_times)
+function simulate(m::SOPModel; rng=Xoshiro(), medium::Medium=Medium(rand(rng, UInt64)),
+        keep_sites::Bool=false, keep_times::Bool=false)
+    st = initial_state(m, rng; keep_times, medium)
     phist = Float64[]
     Nhist = Int[]
     status = evolve!(st, m, rng, phist, Nhist)

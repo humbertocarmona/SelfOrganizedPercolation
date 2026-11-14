@@ -1,5 +1,5 @@
 using SelfOrganizedPercolation
-using SelfOrganizedPercolation: State, resolve!, EMPTY, heap_push!, heap_pop!, Threshold
+using SelfOrganizedPercolation: State, resolve!, EMPTY, heap_push!, heap_pop!, Threshold, threshold
 using Random, Test
 
 @testset "lattice geometry" begin
@@ -29,6 +29,62 @@ end
     xs = rand(Xoshiro(1), 1000)
     foreach(x -> heap_push!(h, (x, 1)), xs)
     @test [heap_pop!(h)[1] for _ in 1:1000] == sort(xs)
+end
+
+@testset "medium thresholds" begin
+    m = Medium(7)
+    xs = [threshold(m, j) for j in 1:200_000]
+    @test all(0 .<= xs .< 1)
+    @test xs == [threshold(Medium(7), j) for j in 1:200_000]        # deterministic
+    @test abs(sum(xs) / length(xs) - 1 / 2) < 0.003
+    @test abs(sum(abs2, xs .- 1 / 2) / length(xs) - 1 / 12) < 0.001
+    counts = zeros(Int, 20)
+    foreach(x -> counts[floor(Int, 20x)+1] += 1, xs)
+    @test all(c -> abs(c / 10_000 - 1) < 0.05, counts)              # flat histogram
+    @test abs(sum((xs[1:end-1] .- 0.5) .* (xs[2:end] .- 0.5)) / length(xs)) < 0.002   # neighbors uncorrelated
+    @test count(j -> threshold(Medium(8), j) == threshold(m, j), 1:1000) == 0
+    @test all(threshold(m, i, i + 3) == threshold(m, i + 3, i) for i in 1:1000)   # bonds are symmetric
+    bonds = [threshold(m, i, i + 1) for i in 1:200_000]
+    @test abs(sum(bonds) / length(bonds) - 1 / 2) < 0.003
+    @test abs(sum((bonds .- 0.5) .* (xs .- 0.5)) / length(xs)) < 0.002         # unrelated to sites
+end
+
+# Sites joined to the seeds by elements with threshold below p: what Persistent must
+# fill at constant p, whatever the order of invasion.
+function static_cluster(lat, W, nx, seeds, medium, perc, p)
+    filled = falses(W * nx)
+    filled[seeds] .= true
+    stack = copy(seeds)
+    while !isempty(stack)
+        i = pop!(stack)
+        for j in neighbors(lat, i, nx, false)
+            (j == 0 || filled[j]) && continue
+            x = perc isa SitePercolation ? threshold(medium, j) : threshold(medium, i, j)
+            x < p && (filled[j] = true; push!(stack, j))
+        end
+    end
+    return reshape(filled, W, nx)
+end
+
+@testset "persistent rule reads the medium" begin
+    for lat in (SquareLattice(64), TriangularLattice(64)),
+        (perc, p) in ((SitePercolation(), 0.47), (BondPercolation(), 0.32))   # below p_c
+
+        m = SOPModel(lat; percolation=perc, rejection=Persistent(), right=FixedRight(48),
+            seeds=16, layout=BlockSeeds(4), c=0.0, p0=p, tmax=3000)
+        medium = Medium(42)
+        a = simulate(m; rng=Xoshiro(1), medium, keep_sites=true)
+        b = simulate(m; rng=Xoshiro(2), medium, keep_sites=true)
+        @test a.status === :tmax                       # finite cluster, never spanned
+        @test a.sites == b.sites                       # the medium alone sets the cluster
+        seeds = findall(!=(EMPTY), a.sites[:, 1])
+        @test (a.sites .!= EMPTY) == static_cluster(lat, 64, 48, seeds, medium, perc, p)
+        c = simulate(m; rng=Xoshiro(1), medium=Medium(43), keep_sites=true)
+        @test c.sites != a.sites
+    end
+    # By default the seed fixes the medium, so models with the same seed share it.
+    m = SOPModel(SquareLattice(32); rejection=Persistent(), seeds=8, p0=0.7, tmax=50)
+    @test simulate(m; rng=Xoshiro(5)).p == simulate(m; rng=Xoshiro(5)).p
 end
 
 @testset "feedback and bookkeeping" begin
@@ -133,7 +189,7 @@ end
     rng = Xoshiro(5)
     n = 30000
     st = State(UInt8[0], UInt8[], 1, [Int[], Int[]], [Int[], Int[]], Tuple{Int,Int}[],
-        [Threshold[], Threshold[]], [1.0, 1.0], [0, 0], [false, false], 0, Int32[], Int32(0))
+        [Threshold[], Threshold[]], [1.0, 1.0], [0, 0], [false, false], 0, Int32[], Int32(0), Medium(1))
     for _ in 1:n
         st.sites[1] = EMPTY
         append!(st.candidates, [(1, 1), (1, 1), (1, 2)])

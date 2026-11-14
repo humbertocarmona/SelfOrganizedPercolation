@@ -38,6 +38,23 @@ paper convert as `c = k L^(d-1)` and `f_T = N_T / L^(d-1)`.
 Fluids never share a site. When several successful bonds reach an empty site in one
 step, one bond is chosen uniformly at random and its fluid takes the site.
 
+## Quenched medium
+
+Under `Persistent`, every site and bond has a fixed threshold `x` uniform in `[0, 1)`,
+and it opens once `x < p(t)`. Thresholds come from a `Medium`, a hash of a seed and the
+element's index, so they do not depend on the order of invasion or on how far the
+lattice grows. All fluids share one medium, and a bond has one threshold.
+
+```julia
+medium = Medium(42)
+a = simulate(model_a; rng = Xoshiro(1), medium)   # same porous medium,
+b = simulate(model_b; rng = Xoshiro(2), medium)   # different seeds and competition
+```
+
+By default the medium is drawn from `rng`, so runs with the same seed (including
+realization `i` of `ensemble`) share it. `Permanent` gives each element one test at
+first contact and still draws it from `rng`.
+
 ## Adding a lattice
 
 A new lattice needs one type and one `neighbors` method. The 3D cubic lattice goes
