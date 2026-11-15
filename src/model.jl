@@ -13,6 +13,24 @@ A rejected element keeps a fixed threshold `x` and is occupied whenever
 """
 struct Persistent <: Rejection end
 
+abstract type Feedback end
+"""
+The two-sided feedback of the 1997 paper, `p(t+1) = p(t) + c[f_T - f(t)]`, clamped
+to `[0, 1]`: `p` rises when the front is too small and falls when it is too large.
+"""
+struct TwoSided <: Feedback end
+"""
+The one-sided ratchet `p(t+1) = p(t) + c[f_T - f(t)]_+`, with `[u]_+ = max(u, 0)`,
+capped at 1: `p` never decreases. With `Persistent` rejection and `f_T < 1/A`, `p`
+rises only while the front is extinct, so every extinction cluster is an
+invasion percolation pond.
+"""
+struct Ratchet <: Feedback end
+
+# Applies one step of the feedback with increment `u = c[f_T - f(t)]`.
+@inline update(::TwoSided, p, u) = clamp(p + u, 0.0, 1.0)
+@inline update(::Ratchet, p, u) = min(p + max(u, 0.0), 1.0)
+
 "The lattice has a fixed `length`; a species that reaches it has spanned."
 struct FixedRight
     length::Int
@@ -100,10 +118,12 @@ convert as `c = k A` and `f_T = N_T / A`.
 - `active_fraction`: fraction of those seeds that start active.
 - `p0`: initial probability; a number or one value per species.
 - `c`: feedback strength in `p(t+1) = p(t) + c[f_T - f(t)]`.
+- `feedback`: `TwoSided()` (default) or `Ratchet()`, which keeps only the positive
+  part of the increment, `p(t+1) = p(t) + c[f_T - f(t)]_+`, so `p` never decreases.
 - `f_T`: target fraction of active sites, a number or a callable of `t`.
 - `tmax`: maximum number of time steps.
 """
-struct SOPModel{L<:Lattice,P<:Percolation,R<:Rejection,B,T,S}
+struct SOPModel{L<:Lattice,P<:Percolation,R<:Rejection,B,T,S,F<:Feedback}
     lattice::L
     percolation::P
     rejection::R
@@ -117,15 +137,18 @@ struct SOPModel{L<:Lattice,P<:Percolation,R<:Rejection,B,T,S}
     f_T::T
     tmax::Int
     layout::S
+    feedback::F
 end
 
 function SOPModel(lattice::Lattice; percolation=BondPercolation(), rejection=Permanent(),
         right=FixedRight(default_length(lattice)), periodic=false, species=1, seeds=100,
-        active_fraction=1.0, p0=1.0, c=0.05, f_T=0.1, tmax=typemax(Int), layout=RandomSeeds())
+        active_fraction=1.0, p0=1.0, c=0.05, f_T=0.1, tmax=typemax(Int), layout=RandomSeeds(),
+        feedback=TwoSided())
     check_injection(lattice, percolation, right, species, seeds, layout, active_fraction)
     probabilities = p0 isa Real ? fill(Float64(p0), species) : Float64.(collect(p0))
     length(probabilities) == species || throw(ArgumentError("p0 needs one value per species"))
     all(p -> 0 <= p <= 1, probabilities) || throw(ArgumentError("p0 must be in [0, 1]"))
     return SOPModel(lattice, percolation, rejection, right, periodic, species, seeds,
-        Float64(active_fraction), probabilities, Float64(c), _target(f_T), tmax, layout)
+        Float64(active_fraction), probabilities, Float64(c), _target(f_T), tmax, layout,
+        feedback)
 end

@@ -180,7 +180,7 @@ function evolve!(st::State, m::SOPModel, rng, phist, Nhist)
             N = length(front)
             push!(Nhist, N)
             st.mass[s] += N
-            st.p[s] = clamp(st.p[s] + m.c * (target - N / W), 0.0, 1.0)
+            st.p[s] = update(m.feedback, st.p[s], m.c * (target - N / W))
             if !st.reached[s]
                 @inbounds for j in front
                     (j - 1) ÷ W == st.nx - 1 && (st.reached[s] = true; break)

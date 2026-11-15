@@ -106,6 +106,67 @@ end
     @test r.mass[1] == 20 + round(Int, sum(r.f) * 64)
 end
 
+@testset "ratchet feedback" begin
+    # Eq. (1) of the SOP-IP note: only the positive part of c[f_T - f] is added.
+    for perc in (SitePercolation(), BondPercolation()), rej in (Permanent(), Persistent())
+        m = SOPModel(SquareLattice(64); percolation=perc, rejection=rej, seeds=20, c=0.064,
+            f_T=10 / 64, p0=0.6, tmax=200, feedback=Ratchet())
+        r = simulate(m; rng=Xoshiro(3))
+        for t in 1:size(r.p, 1)-1
+            @test r.p[t+1] ≈ min(r.p[t] + 0.064 * max(10 / 64 - r.f[t], 0), 1)
+        end
+        @test all(diff(r.p[:, 1]) .>= 0)                    # p never decreases
+        @test any(r.f .> 10 / 64)                           # ...although the front overshoots
+        @test all(0 .<= r.p .<= 1)
+    end
+    # The default is the two-sided rule, and it differs from the ratchet.
+    kw = (; seeds=20, c=0.064, f_T=10 / 64, p0=0.6, tmax=200)
+    @test SOPModel(SquareLattice(64); kw...).feedback === TwoSided()
+    two = simulate(SOPModel(SquareLattice(64); kw...); rng=Xoshiro(3))
+    @test two.p == simulate(SOPModel(SquareLattice(64); kw..., feedback=TwoSided()); rng=Xoshiro(3)).p
+    @test any(diff(two.p[:, 1]) .< 0)
+    # Several species: each has its own ratchet.
+    m = SOPModel(SquareLattice(64); species=2, seeds=10, c=0.1, f_T=5 / 64, p0=[0.5, 0.7],
+        tmax=100, feedback=Ratchet())
+    r = simulate(m; rng=Xoshiro(6))
+    @test all(diff(r.p; dims=1) .>= 0)
+    # Saturates at 1 instead of overshooting.
+    r = simulate(SOPModel(SquareLattice(32); seeds=4, c=10.0, f_T=0.5, p0=0.95, tmax=5,
+        feedback=Ratchet()); rng=Xoshiro(1))
+    @test maximum(r.p) == 1.0
+end
+
+@testset "ratchet extinction clusters are invasion percolation ponds" begin
+    # With Persistent rejection, p0 = 0 and f_T < 1/A, the SOP cluster at every
+    # extinction is the IP cluster of the same size in the same medium (Proposition 2
+    # of the SOP-IP note).
+    for lat in (SquareLattice(32), TriangularLattice(32)), perc in (SitePercolation(), BondPercolation())
+        W = SelfOrganizedPercolation.transverse_sites(lat)
+        medium = Medium(11)
+        sop = SOPModel(lat; percolation=perc, rejection=Persistent(), right=FixedRight(40),
+            seeds=8, p0=0.0, c=1.0, f_T=0.5 / W, tmax=100_000, feedback=Ratchet())
+        ip = IPModel(lat; percolation=perc, right=FixedRight(40), seeds=8)
+        a = simulate(sop; rng=Xoshiro(2), medium, keep_times=true)
+        b = simulate(ip; rng=Xoshiro(2), medium, keep_times=true)
+        @test a.status === :spanned
+        nseeds = count(==(0), b.times)
+        extinctions = 0
+        for k in 2:size(a.f, 1)
+            a.f[k, 1] == 0 && a.f[k-1, 1] > 0 || continue   # the front has just died
+            cluster = 0 .<= a.times .<= k
+            n = count(cluster) - nseeds
+            @test cluster == (0 .<= b.times .<= n)
+            @test b.x[n+1] >= a.p[k, 1]                     # the next IP threshold is above p
+            extinctions += 1
+        end
+        @test extinctions > 3
+        # The two-sided rule does not give the same guarantee: p falls inside a pond.
+        two = SOPModel(lat; percolation=perc, rejection=Persistent(), right=FixedRight(40),
+            seeds=8, p0=0.0, c=1.0, f_T=0.5 / W, tmax=100_000)
+        @test any(diff(simulate(two; rng=Xoshiro(2), medium).p[:, 1]) .< 0)
+    end
+end
+
 @testset "time-dependent target" begin
     m = SOPModel(SquareLattice(64); seeds=20, c=0.064, f_T=PowerLawTarget(10 / 64, 0.5), p0=0.7, tmax=50)
     r = simulate(m; rng=Xoshiro(4))
@@ -280,9 +341,9 @@ end
 
 @testset "no type instability in the kernel" begin
     for lat in (SquareLattice(32), TriangularLattice(32), CubicLattice(6)), rej in (Permanent(), Persistent()),
-        perc in (SitePercolation(), BondPercolation())
+        perc in (SitePercolation(), BondPercolation()), fb in (TwoSided(), Ratchet())
 
-        m = SOPModel(lat; percolation=perc, rejection=rej, seeds=4, f_T=0.25, p0=0.7, tmax=20)
+        m = SOPModel(lat; percolation=perc, rejection=rej, seeds=4, f_T=0.25, p0=0.7, tmax=20, feedback=fb)
         @test (@inferred simulate(m; rng=Xoshiro(1))) isa SOPResult
     end
 end

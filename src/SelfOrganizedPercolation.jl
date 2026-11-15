@@ -13,6 +13,7 @@ using Random
 export SquareLattice, TriangularLattice, CubicLattice
 export SitePercolation, BondPercolation
 export Permanent, Persistent
+export TwoSided, Ratchet
 export FixedRight, GrowingRight
 export PowerLawTarget
 export RandomSeeds, BlockSeeds

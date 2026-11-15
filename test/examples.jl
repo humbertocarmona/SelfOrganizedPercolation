@@ -197,8 +197,123 @@ function ex_large()
     @printf("   IP on 8192² (67 M sites): %d invasions in %.1f s\n", sum(r.mass) - 8192, t)
 end
 
+# ---------------------------------------------------------------------------- feedback
+
+"13. Ratchet against two-sided feedback with a small target f_T < 1/A, on an L × 3L lattice."
+function ex_ratchet()
+    L = 512
+    right = FixedRight(3L)
+    medium = Medium(13)
+    # IP on the same medium: its breakthrough cluster and the largest threshold it crosses.
+    ip = IPModel(SquareLattice(L); percolation=SitePercolation(), seeds=100, right)
+    a = simulate(ip; rng=Xoshiro(13), medium, keep_times=true)
+    xmax = maximum(a.x)
+    IPset = a.times .>= 0
+    nseeds = count(==(0), a.times)
+    @printf("   IP: mass %d, largest threshold before breakthrough %.4f (p_c = 0.5927)\n", a.mass[1], xmax)
+    differs(A, B) = 100 * count(A .⊻ B) / count(A .| B)
+    # SOP cluster after step k, and the IP cluster of the same size.
+    upto(r, k) = 0 .<= r.times .<= k
+    ipof(C) = 0 .<= a.times .<= count(C) - nseeds
+    runs = []
+    paxes = Axis[]
+    f = Figure(size=(1100, 1000), backgroundcolor=:white, figure_padding=(10, 30, 10, 10))
+    for (col, fb) in enumerate((TwoSided(), Ratchet()))
+        # f_T < 1/A: one active site is already above target, so p cannot rise while the front lives.
+        m = SOPModel(SquareLattice(L); percolation=SitePercolation(), rejection=Persistent(),
+            seeds=100, p0=0.0, c=0.1, f_T=0.5 / L, right, feedback=fb)
+        r = simulate(m; rng=Xoshiro(13), medium, keep_times=true)
+        push!(runs, r)
+        p = @view r.p[:, 1]
+        S = r.times .>= 0
+        @printf("   %-8s %s after %d steps, mass %d, max p %.4f, steps with p falling %d, differs from IP on %.1f%% of the union\n",
+            nameof(typeof(fb)), r.status, length(p), r.mass[1], maximum(p), count(<(0), diff(p)),
+            differs(S, IPset))
+        name = nameof(typeof(fb))
+        ax = Axis(f[1, col]; title="$name feedback, f_T = 1/(2A)", titlealign=:left,
+            titlefont=:regular, xlabel="t", ylabel=col == 1 ? "p" : "")
+        push!(paxes, ax)
+        lines!(ax, p; label="p(t)")
+        hlines!(ax, [0.5927]; color=:gray, linestyle=:dash, label="p_c")
+        hlines!(ax, [xmax]; color=:black, linestyle=:dot, label="largest IP threshold")
+        col == 1 && axislegend(ax; position=:rb)
+        # Final cluster against IP: 1 both, 2 SOP only, 3 IP only.
+        C = @. ifelse(S & IPset, 1, ifelse(S, 2, ifelse(IPset, 3, 0)))
+        ax2 = Axis(f[col+1, 1:2]; aspect=DataAspect(), title="$name cluster: gray both, blue SOP only, orange IP only",
+            titlealign=:left, titlefont=:regular, xlabel=col == 2 ? "x" : "", ylabel="y")
+        heatmap!(ax2, permutedims(C); colormap=[colorant"#ffffff", colorant"#9a9a9a", colorant"#2a78d6",
+            colorant"#eb6834"], colorrange=(0, 3), interpolate=false)
+    end
+    linkaxes!(paxes...)
+    rowsize!(f.layout, 1, Relative(0.3))
+    savefig("13_ratchet.png", f)
+    # Breakthrough always stops inside the spanning pond. Compare instead at the ratchet's
+    # last extinction, where Proposition 2 makes its cluster an IP cluster, and at the
+    # first step where the two-sided cluster is at least as large.
+    two, ratchet = runs
+    k = findlast(j -> ratchet.f[j, 1] == 0 && ratchet.f[j-1, 1] > 0, 2:size(ratchet.f, 1)) + 1
+    R = upto(ratchet, k)
+    n = count(R)
+    T = upto(two, findfirst(j -> count(upto(two, j)) >= n, 1:size(two.f, 1)))
+    @printf("   at the ratchet's last extinction (step %d, mass %d, %.0f%% of its final mass):\n",
+        k - 1, n, 100n / ratchet.mass[1])
+    @printf("   %-8s mass %d, differs from the IP cluster of that size on %d sites\n",
+        "Ratchet", n, count(R .⊻ ipof(R)))
+    @printf("   %-8s mass %d, differs from the IP cluster of that size on %d sites\n",
+        "TwoSided", count(T), count(T .⊻ ipof(T)))
+end
+
+"14. Ratchet SOP with persistent rejection on an L × 3L lattice: every extinction cluster is an IP pond."
+function ex_ratchet_ponds()
+    L = 256
+    medium = Medium(14)
+    # p0 = 0 and f_T < 1/A: p rises only while the front is extinct.
+    right = FixedRight(3L)
+    ratchet = SOPModel(SquareLattice(L); percolation=BondPercolation(), rejection=Persistent(),
+        seeds=L, p0=0.0, c=1.0, f_T=0.5 / L, right, feedback=Ratchet())
+    ip = IPModel(SquareLattice(L); percolation=BondPercolation(), seeds=L, right)
+    r = simulate(ratchet; rng=Xoshiro(1), medium, keep_times=true)
+    a = simulate(ip; rng=Xoshiro(1), medium, keep_times=true)
+    nseeds = count(==(0), a.times)
+    # Extinctions: rows k of r.f whose front has just died. The cluster then is the
+    # sites with arrival time 0..k.
+    ext = [k for k in 2:size(r.f, 1) if r.f[k, 1] == 0 && r.f[k-1, 1] > 0]
+    ponds = count(ext) do k
+        cluster = 0 .<= r.times .<= k
+        cluster == (0 .<= a.times .<= count(cluster) - nseeds)
+    end
+    @printf("   ratchet: %s after %d steps, %d extinctions, %d of them equal to the IP cluster of that size\n",
+        r.status, size(r.p, 1), length(ext), ponds)
+    # Pond index of each site: pond i is filled between extinctions i-1 and i; seeds are
+    # in pond 1, and the sites after the last extinction form the spanning pond, cut at the wall.
+    npond = length(ext) + 1
+    pond = map(t -> t < 0 ? 0 : searchsortedfirst(ext, t), r.times)
+    sizes = [count(==(i), pond) for i in 1:npond]
+    @printf("   %d complete ponds, the largest %d sites; spanning pond %d sites, %.0f%% of the final mass %d\n",
+        npond - 1, maximum(sizes[1:end-1]), sizes[end], 100sizes[end] / r.mass[1], r.mass[1])
+    @printf("   pond levels: first %.4f, last complete %.4f, breakthrough %.4f (p_c = 0.5)\n",
+        r.p[ext[1], 1], r.p[ext[end], 1], r.p[end, 1])
+    # Ponds in cycling categorical colors, so consecutive ponds differ; the spanning pond in black.
+    palette = Makie.wong_colors()[[1, 3, 4, 5, 6, 7]]
+    pondcolor(i) = i == npond ? colorant"black" : palette[mod1(i, length(palette))]
+    f = Figure(size=(1100, 800), backgroundcolor=:white)
+    # p(t): rising while extinct, flat while a pond fills; dots are the pond levels.
+    ax = Axis(f[1, 1]; xlabel="t", ylabel="p", title="ratchet p(t); dots: p at each extinction, colored by pond",
+        titlealign=:left, titlefont=:regular)
+    lines!(ax, r.p[:, 1]; color=:gray40)
+    scatter!(ax, ext, r.p[ext, 1]; markersize=6, color=pondcolor.(1:length(ext)))
+    hlines!(ax, [0.5]; color=:gray, linestyle=:dash)
+    ax2 = Axis(f[2, 1]; aspect=DataAspect(), xlabel="x", ylabel="y", xgridvisible=false, ygridvisible=false,
+        title="cluster colored by pond (colors cycle); black: spanning pond, filled after the last extinction",
+        titlealign=:left, titlefont=:regular)
+    image!(ax2, (0.5, 3L + 0.5), (0.5, L + 0.5), permutedims(map(i -> i == 0 ? colorant"white" : pondcolor(i), pond));
+        interpolate=false)
+    rowsize!(f.layout, 1, Relative(0.4))
+    savefig("14_ratchet_ponds.png", f)
+end
+
 const EXAMPLES = [ex_basic, ex_target, ex_rejection, ex_ensemble, ex_fluids, ex_layouts,
-    ex_active, ex_ip, ex_ip_fluids, ex_shared_medium, ex_cubic, ex_large]
+    ex_active, ex_ip, ex_ip_fluids, ex_shared_medium, ex_cubic, ex_large, ex_ratchet, ex_ratchet_ponds]
 
 # The first line of a docstring, as written (rendering would turn p_c into italics).
 function title(f)
