@@ -6,7 +6,7 @@ Outcome of one run. `p[t+1, s]` is the probability used by species `s` at time
 area, `N/L^(d-1)`.
 
 `status` is `:extinct`, `:spanned`, `:tmax` or `:maxlength`. `sites` is the
-lattice (`0` empty, `s` for species `s`) with `keep_sites=true`, of size `(W, L)`,
+lattice (`0` empty, `s` for species `s`, `TRAPPED` for trapped defender) with `keep_sites=true`, of size `(W, L)`,
 or `(ny, nz, L)` for `CubicLattice`. `times` is the
 arrival time of each site with `keep_times=true`: `t + 1` for a site filled at
 time `t`, `0` for a seed, and `-1` for a site never filled.
@@ -36,6 +36,7 @@ mutable struct State
     times::Vector{Int32}           # arrival times; empty unless they are requested
     step::Int32                    # value recorded for the sites filled in this step
     medium::Medium                 # thresholds of the Persistent rule
+    trap::Trapper                  # scratch space of the trapping rule
 end
 
 wall_order(::RandomSeeds, m, W, rng) = randperm(rng, W)
@@ -63,7 +64,8 @@ function initial_state(m::SOPModel, rng; keep_times::Bool=false, medium::Medium=
     end
     return State(sites, tested, nx, fronts, [Int[] for _ in 1:m.species], Tuple{Int,Int}[],
         [Threshold[] for _ in 1:m.species], copy(m.p0), fill(m.seeds, m.species),
-        fill(false, m.species), 0, times, Int32(0), medium)
+        fill(false, m.species), 0, times, Int32(0), medium,
+        Trapper(m.trapping ? W * nx : 0))
 end
 
 function extend!(st, W::Int, nx::Int)
@@ -78,6 +80,10 @@ function extend!(st, W::Int, nx::Int)
     if !isempty(st.times)
         resize!(st.times, new)
         fill!(view(st.times, old+1:new), Int32(-1))
+    end
+    if enabled(st.trap)
+        resize!(st.trap.mark, new)
+        fill!(view(st.trap.mark, old+1:new), 0x00000000)
     end
     st.nx = nx
     return st
@@ -126,8 +132,12 @@ Gives each contested site to one candidate chosen uniformly at random: after a
 shuffle, the first candidate for a site claims it. A site with two candidates
 from one fluid and one from another therefore goes to the first fluid with
 probability 2/3.
+
+Sites are placed one at a time, and `after(j)` runs after site `j` is placed, so
+the trapping rule sees the lattice as it was when `j` was filled: a candidate site
+that an earlier placement trapped is skipped.
 """
-function resolve!(st::State, W::Int, rng)
+function resolve!(st::State, W::Int, rng, after=nothing)
     length(st.next) > 1 && shuffle!(rng, st.candidates)
     @inbounds for (j, s) in st.candidates
         st.sites[j] == EMPTY || continue
@@ -135,6 +145,7 @@ function resolve!(st::State, W::Int, rng)
         isempty(st.times) || (st.times[j] = st.step)
         push!(st.next[s], j)
         st.xmax = max(st.xmax, (j - 1) ÷ W)
+        after === nothing || after(j)
     end
     empty!(st.candidates)
     return nothing
@@ -173,7 +184,11 @@ function evolve!(st::State, m::SOPModel, rng, phist, Nhist)
             push!(phist, st.p[s])
             propose!(st, m, s, rng)
         end
-        resolve!(st, W, rng)
+        if m.trapping
+            resolve!(st, W, rng, j -> trap!(st.trap, st.sites, m.lattice, m.periodic, st.nx, j))
+        else
+            resolve!(st, W, rng)
+        end
         target = m.f_T(t)
         for s in 1:ns
             front = st.next[s]

@@ -27,6 +27,7 @@ means = ensemble(model, 64; f = r -> stationary_mean(@view r.p[:, 1]))   # start
 | `right` | `FixedRight(L)`, `GrowingRight(L0; maxlength)` (the wall moves ahead of the front) |
 | `periodic` | periodic transverse boundaries; `false` matches the 1997 paper |
 | `species` | number of immiscible fluids: up to 254 for bond, 8 for site |
+| `trapping` | `false` (default) or `true`: defender cut off from the outlet is trapped |
 | `f_T` | a number, `PowerLawTarget(a, α)`, or any function of `t` |
 
 Active sites are measured in units of the wall surface area, so the feedback rule is
@@ -59,7 +60,7 @@ first contact and still draws it from `rng`.
 
 `IPModel` takes the same lattice, percolation type, boundaries and seeds as `SOPModel`.
 Each step it picks a fluid uniformly at random and invades the smallest threshold on
-that fluid's perimeter. There is no trapping. The perimeter is a binary heap
+that fluid's perimeter. There is no trapping unless `trapping = true`. The perimeter is a binary heap
 (Masson & Pride, *Transp. Porous Med.* 102, 301, 2014), so `M` invasions take
 `O(M log M)` time. Thresholds are hashed rather than stored, so memory is about one
 byte per lattice site plus 16 bytes per perimeter element.
@@ -74,6 +75,44 @@ r.status    # :spanned when a fluid reaches the right wall
 Run with the same `medium` (or the same `rng` seed), `IPModel` and a `Persistent`
 `SOPModel` see the same thresholds. Use `keep_history = false` on very large runs.
 `reproduce/invasion.jl` checks the cost per invasion and the fractal dimension.
+
+## Trapping
+
+With `trapping = true` (in `SOPModel`, `IPModel` and `CVModel`), a region of
+defender cut off from the outlet, the last column, is trapped: it can no longer be
+invaded, and its sites read `TRAPPED` in `sites`. With `GrowingRight` the outlet is
+the current last column, which stays ahead of the front. In SOP the sites of one
+step are placed one at a time, so a site trapped earlier in the step is skipped.
+
+After each invasion, one search starts from each empty neighbor of the invaded
+site, and the searches advance in turn until all but one are resolved: joined to
+another, at the outlet, or closed. Closed regions are trapped. The cost per
+invasion is about twice that of the run without trapping on the square lattice.
+In `CVModel` trapping keeps the front, and so the compliance of the menisci, from
+growing without bound, as in Furuberg, Måløy & Feder (*Phys. Rev. E* 53, 966, 1996).
+
+## Capacitive-volume model
+
+`CVModel` is the model of slow drainage of Måløy et al. (*Phys. Rev. Lett.* 68, 2161,
+1992): invasion percolation with a pressure and a time. One fluid is injected at a
+constant `rate`, and the volume that does not fill pores is stored by a compliance
+`C = compliance + meniscus * n_f`, the injection system plus the `n_f` menisci on the
+front. The weakest element on the perimeter is invaded once the pressure reaches its
+threshold; if the pressure is below it, it first builds up, which takes time and
+starts a new burst. Each invaded pore lowers the pressure by `1/C`.
+
+The invasion order is exactly that of `IPModel` on the same medium, so the model adds
+only the pressure signal. Pressure is in threshold units, the `p` of `SOPModel`, and
+SOP's parameters convert as `compliance = A/c` and `rate = f_T A`, with `A` the wall
+area. Måløy et al. have `meniscus > 0` and `compliance = 0`; SOP has the opposite.
+
+```julia
+cv = CVModel(SquareLattice(512); compliance = 512 / 0.05, meniscus = 0.0, rate = 1.0,
+    percolation = BondPercolation(), seeds = 512, periodic = true)
+r = simulate(cv; rng = Xoshiro(1), medium = Medium(42))
+r.p, r.t, r.nf   # pressure after, time of, and menisci before each invasion
+b = bursts(r)    # size, drop, peak, start and time of each burst
+```
 
 ## Three dimensions
 

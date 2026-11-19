@@ -259,7 +259,8 @@ end
     rng = Xoshiro(5)
     n = 30000
     st = State(UInt8[0], UInt8[], 1, [Int[], Int[]], [Int[], Int[]], Tuple{Int,Int}[],
-        [Threshold[], Threshold[]], [1.0, 1.0], [0, 0], [false, false], 0, Int32[], Int32(0), Medium(1))
+        [Threshold[], Threshold[]], [1.0, 1.0], [0, 0], [false, false], 0, Int32[], Int32(0), Medium(1),
+        SelfOrganizedPercolation.Trapper(0))
     for _ in 1:n
         st.sites[1] = EMPTY
         append!(st.candidates, [(1, 1), (1, 1), (1, 2)])
@@ -481,4 +482,231 @@ end
         @test r.status === :spanned
         @test abs(maximum(r.x) - pc) < 0.02
     end
+end
+
+# Menisci on the front after a run, counted from scratch: perimeter sites for site
+# percolation, (contributor, empty neighbor) bonds for bond percolation.
+function brute_menisci(sites, lat, nx, periodic, contributors, perc)
+    empties = Int[]
+    for i in contributors, j in neighbors(lat, i, nx, periodic)
+        j != 0 && sites[j] == EMPTY && push!(empties, j)
+    end
+    return perc isa SitePercolation ? length(unique(empties)) : length(empties)
+end
+
+@testset "capacitive volume: invasion order is that of IP" begin
+    for lat in (SquareLattice(32), TriangularLattice(32), CubicLattice(6)),
+        perc in (SitePercolation(), BondPercolation()), periodic in (false, true)
+
+        kw = (percolation=perc, periodic, seeds=6, right=FixedRight(32))
+        ip = simulate(IPModel(lat; kw...); rng=Xoshiro(4))
+        cv = simulate(CVModel(lat; compliance=50.0, meniscus=0.3, kw...); rng=Xoshiro(4))
+        @test cv.x == ip.x
+        @test cv.status === ip.status === :spanned
+        @test cv.mass == ip.mass[1]
+    end
+end
+
+@testset "capacitive volume: menisci on the front" begin
+    for lat in (SquareLattice(16), TriangularLattice(16)),
+        perc in (SitePercolation(), BondPercolation()), frac in (1.0, 0.5)
+
+        medium = Medium(5)
+        kw = (percolation=perc, periodic=true, seeds=8, active_fraction=frac,
+            right=GrowingRight(8))
+        full = simulate(CVModel(lat; compliance=10.0, meniscus=1.0, nmax=300, kw...);
+            rng=Xoshiro(2), medium)
+        st = SelfOrganizedPercolation.initial_state(IPModel(lat; kw...), Xoshiro(2),
+            medium, false)
+        for k in (1, 2, 17, 150, 300)
+            r = simulate(CVModel(lat; compliance=10.0, nmax=k - 1, kw...);
+                rng=Xoshiro(2), medium, keep_sites=true, keep_times=true)
+            contributors = vcat(st.active, findall(>(0), vec(r.times)))
+            nx = size(r.sites, 2)
+            @test full.nf[k] == brute_menisci(vec(r.sites), lat, nx, true,
+                contributors, perc)
+        end
+    end
+end
+
+@testset "capacitive volume: volume balance and bursts" begin
+    lat = SquareLattice(64)
+    # Constant compliance: C (p - p0) = rate t - (pores invaded), at every invasion.
+    cv = CVModel(lat; compliance=200.0, rate=3.0, p0=0.1, seeds=64, periodic=true)
+    r = simulate(cv; rng=Xoshiro(7))
+    k = 1:length(r.x)
+    @test all(@. isapprox(200.0 * (r.p - 0.1), 3.0 * r.t - k; atol=1e-8))
+    # With menisci, step by step.
+    cm = CVModel(lat; compliance=20.0, meniscus=0.5, rate=2.0, seeds=64)
+    s = simulate(cm; rng=Xoshiro(7))
+    prev, tprev = 0.0, 0.0
+    for n in eachindex(s.x)
+        C = 20.0 + 0.5 * s.nf[n]
+        @test s.t[n] - tprev ≈ C * max(s.x[n] - prev, 0.0) / 2.0
+        @test s.p[n] ≈ max(prev, s.x[n]) - 1 / C
+        prev, tprev = s.p[n], s.t[n]
+    end
+    b = bursts(s)
+    @test sum(b.size) == length(s.x)
+    @test issorted(b.start) && all(>(0), b.drop)
+    @test b.peak == s.x[b.start]
+    @test all(diff(b.time) .> 0)
+    # A stiff system cannot sustain a burst: one pore per burst.
+    stiff = simulate(CVModel(lat; compliance=0.01, seeds=64); rng=Xoshiro(7))
+    @test all(==(1), bursts(stiff).size)
+    # A soft one has bursts of many pores, and its peak pressure stays near p_c.
+    soft = simulate(CVModel(lat; compliance=5000.0, seeds=64, periodic=true);
+        rng=Xoshiro(7))
+    @test maximum(bursts(soft).size) > 20
+    @test abs(maximum(soft.x) - 0.5) < 0.05     # bond p_c on the square lattice
+end
+
+@testset "capacitive volume: arguments, stability, ensemble" begin
+    lat = SquareLattice(16)
+    @test_throws ArgumentError CVModel(lat; compliance=1.0, species=2)
+    @test_throws ArgumentError CVModel(lat; compliance=0.0)
+    @test_throws ArgumentError CVModel(lat; compliance=1.0, rate=0.0)
+    for l in (SquareLattice(16), CubicLattice(5)), perc in (SitePercolation(), BondPercolation())
+        m = CVModel(l; compliance=5.0, meniscus=0.2, percolation=perc, seeds=4)
+        @test (@inferred simulate(m; rng=Xoshiro(1))) isa CVResult
+    end
+    quiet = simulate(CVModel(lat; compliance=5.0, seeds=4); keep_history=false)
+    @test isempty(quiet.x) && quiet.status === :spanned
+    sizes = ensemble(CVModel(lat; compliance=5.0, seeds=4), 4; f=r -> length(r.x))
+    @test length(sizes) == 4
+end
+
+# Empty sites that reach the last column through empty sites.
+function open_to_outlet(sites, lat, nx, periodic)
+    W = length(sites) ÷ nx
+    seen = falses(length(sites))
+    stack = [i for i in W*(nx-1)+1:W*nx if sites[i] == EMPTY]
+    seen[stack] .= true
+    while !isempty(stack)
+        for j in neighbors(lat, pop!(stack), nx, periodic)
+            j != 0 && sites[j] == EMPTY && !seen[j] && (seen[j] = true; push!(stack, j))
+        end
+    end
+    return seen
+end
+
+# Invasion percolation with trapping by brute force: after every invasion, every
+# empty site that no longer reaches the outlet is trapped.
+function brute_trapping(lat, W, nx, periodic, seeds, medium, perc)
+    sites = zeros(UInt8, W * nx)
+    sites[seeds] .= 0x01
+    order = Int[]
+    while true
+        best, site = Inf, 0
+        for i in findall(==(0x01), sites), j in neighbors(lat, i, nx, periodic)
+            (j == 0 || sites[j] != EMPTY) && continue
+            x = perc isa SitePercolation ? threshold(medium, j) : threshold(medium, i, j)
+            x < best && ((best, site) = (x, j))
+        end
+        site == 0 && break
+        sites[site] = 0x01
+        push!(order, site)
+        (site - 1) ÷ W == nx - 1 && break
+        reach = open_to_outlet(sites, lat, nx, periodic)
+        for u in eachindex(sites)
+            sites[u] == EMPTY && !reach[u] && (sites[u] = TRAPPED)
+        end
+    end
+    return order, sites
+end
+
+# The trapping is exact: every empty site reaches the outlet, and no trapped
+# site touches an empty one.
+function trapping_exact(sites, lat, periodic)
+    nx = size(sites)[end]
+    v = vec(sites)
+    reach = open_to_outlet(v, lat, nx, periodic)
+    all(u -> v[u] != EMPTY || reach[u], eachindex(v)) || return false
+    for u in eachindex(v)
+        v[u] == TRAPPED || continue
+        any(j -> j != 0 && v[j] == EMPTY, neighbors(lat, u, nx, periodic)) && return false
+    end
+    return true
+end
+
+@testset "invasion percolation with trapping matches brute force" begin
+    ntrapped = 0
+    for lat in (SquareLattice(14), TriangularLattice(14), CubicLattice(5, 4)),
+        perc in (SitePercolation(), BondPercolation()), periodic in (false, true)
+
+        m = IPModel(lat; percolation=perc, periodic, seeds=4, right=FixedRight(20),
+            trapping=true)
+        medium = Medium(8)
+        r = simulate(m; rng=Xoshiro(3), medium, keep_sites=true, keep_times=true)
+        seeds = findall(==(0), vec(r.times))
+        W = SelfOrganizedPercolation.transverse_sites(lat)
+        order, sites = brute_trapping(lat, W, 20, periodic, seeds, medium, perc)
+        invaded = sortperm(vec(r.times))[length(seeds)+count(<(0), r.times)+1:end]
+        @test invaded == order
+        @test vec(r.sites) == sites
+        ntrapped += count(==(TRAPPED), r.sites)
+    end
+    @test ntrapped > 100
+end
+
+@testset "trapping is exact in every model" begin
+    for lat in (SquareLattice(48), TriangularLattice(48), CubicLattice(8)),
+        perc in (SitePercolation(), BondPercolation()), periodic in (false, true)
+
+        kw = (percolation=perc, periodic, seeds=6, right=GrowingRight(8), trapping=true)
+        ip = simulate(IPModel(lat; nmax=4000, species=2, kw...); rng=Xoshiro(2),
+            keep_sites=true)
+        @test trapping_exact(ip.sites, lat, periodic)
+        @test count(==(TRAPPED), ip.sites) > 0
+        for rej in (Permanent(), Persistent())
+            sop = simulate(SOPModel(lat; rejection=rej, species=2, f_T=0.1, c=0.1,
+                p0=0.6, tmax=300, kw...); rng=Xoshiro(2), keep_sites=true)
+            @test trapping_exact(sop.sites, lat, periodic)
+            for s in 1:2
+                @test count(==(UInt8(s)), sop.sites) == sop.mass[s]
+            end
+        end
+        cv = simulate(CVModel(lat; compliance=50.0, meniscus=0.5, nmax=4000, kw...);
+            rng=Xoshiro(2), keep_sites=true)
+        @test trapping_exact(cv.sites, lat, periodic)
+        @test cv.x == simulate(IPModel(lat; nmax=4000, kw...); rng=Xoshiro(2)).x
+    end
+    # Off by default, and nothing is trapped then.
+    r = simulate(IPModel(SquareLattice(32); seeds=8); rng=Xoshiro(1), keep_sites=true)
+    @test !any(==(TRAPPED), r.sites)
+    for lat in (SquareLattice(32), CubicLattice(6)), perc in (SitePercolation(), BondPercolation())
+        @test (@inferred simulate(SOPModel(lat; percolation=perc, seeds=4, tmax=30,
+            rejection=Persistent(), trapping=true); rng=Xoshiro(1))) isa SOPResult
+        @test (@inferred simulate(IPModel(lat; percolation=perc, seeds=4,
+            trapping=true); rng=Xoshiro(1))) isa IPResult
+    end
+end
+
+@testset "capacitive volume with trapping: menisci and a steady front" begin
+    for lat in (SquareLattice(16), TriangularLattice(16)),
+        perc in (SitePercolation(), BondPercolation())
+
+        medium = Medium(5)
+        kw = (percolation=perc, periodic=true, seeds=8, right=GrowingRight(8),
+            trapping=true)
+        full = simulate(CVModel(lat; compliance=10.0, meniscus=1.0, nmax=600, kw...);
+            rng=Xoshiro(2), medium)
+        st = SelfOrganizedPercolation.initial_state(IPModel(lat; kw...), Xoshiro(2),
+            medium, false)
+        for k in (2, 40, 300, 600)
+            r = simulate(CVModel(lat; compliance=10.0, nmax=k - 1, kw...);
+                rng=Xoshiro(2), medium, keep_sites=true, keep_times=true)
+            contributors = vcat(st.active, findall(>(0), vec(r.times)))
+            @test full.nf[k] == brute_menisci(vec(r.sites), lat, size(r.sites, 2),
+                true, contributors, perc)
+        end
+    end
+    # Furuberg et al.: without trapping the front keeps growing; with it, it settles.
+    lat = SquareLattice(32)
+    kw = (seeds=32, periodic=true, right=GrowingRight(16), nmax=30000)
+    free = simulate(CVModel(lat; compliance=0.0, meniscus=1.0, kw...); rng=Xoshiro(1))
+    trap = simulate(CVModel(lat; compliance=0.0, meniscus=1.0, trapping=true, kw...);
+        rng=Xoshiro(1))
+    @test free.nf[end] > 1.6 * free.nf[end÷2]
+    @test trap.nf[end] < 1.3 * trap.nf[end÷2]
 end

@@ -17,16 +17,18 @@ export TwoSided, Ratchet
 export FixedRight, GrowingRight
 export PowerLawTarget
 export RandomSeeds, BlockSeeds
-export Medium
-export SOPModel, SOPResult, IPModel, IPResult
-export simulate, ensemble, stationary_mean, neighbors
+export Medium, TRAPPED
+export SOPModel, SOPResult, IPModel, IPResult, CVModel, CVResult
+export simulate, ensemble, stationary_mean, neighbors, bursts
 
 include("lattices.jl")
 include("model.jl")
 include("medium.jl")
 include("heap.jl")
+include("trapping.jl")
 include("simulate.jl")
 include("invasion.jl")
+include("capacitive.jl")
 include("ensemble.jl")
 
 end

@@ -122,6 +122,9 @@ convert as `c = k A` and `f_T = N_T / A`.
   part of the increment, `p(t+1) = p(t) + c[f_T - f(t)]_+`, so `p` never decreases.
 - `f_T`: target fraction of active sites, a number or a callable of `t`.
 - `tmax`: maximum number of time steps.
+- `trapping`: when `true`, defender regions cut off from the outlet, the last
+  column, are trapped and can no longer be invaded (default `false`). Trapped
+  sites are marked [`TRAPPED`](@ref) in `sites`.
 """
 struct SOPModel{L<:Lattice,P<:Percolation,R<:Rejection,B,T,S,F<:Feedback}
     lattice::L
@@ -138,17 +141,18 @@ struct SOPModel{L<:Lattice,P<:Percolation,R<:Rejection,B,T,S,F<:Feedback}
     tmax::Int
     layout::S
     feedback::F
+    trapping::Bool
 end
 
 function SOPModel(lattice::Lattice; percolation=BondPercolation(), rejection=Permanent(),
         right=FixedRight(default_length(lattice)), periodic=false, species=1, seeds=100,
         active_fraction=1.0, p0=1.0, c=0.05, f_T=0.1, tmax=typemax(Int), layout=RandomSeeds(),
-        feedback=TwoSided())
+        feedback=TwoSided(), trapping=false)
     check_injection(lattice, percolation, right, species, seeds, layout, active_fraction)
     probabilities = p0 isa Real ? fill(Float64(p0), species) : Float64.(collect(p0))
     length(probabilities) == species || throw(ArgumentError("p0 needs one value per species"))
     all(p -> 0 <= p <= 1, probabilities) || throw(ArgumentError("p0 must be in [0, 1]"))
     return SOPModel(lattice, percolation, rejection, right, periodic, species, seeds,
         Float64(active_fraction), probabilities, Float64(c), _target(f_T), tmax, layout,
-        feedback)
+        feedback, Bool(trapping))
 end

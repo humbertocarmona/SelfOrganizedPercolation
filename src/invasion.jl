@@ -1,7 +1,8 @@
 """
     IPModel(lattice; kwargs...)
 
-Invasion percolation without trapping (Wilkinson & Willemsen 1983), with one or more
+Invasion percolation (Wilkinson & Willemsen 1983), without trapping unless `trapping`
+is set, with one or more
 immiscible fluids injected from the left wall. Each step picks one fluid uniformly at
 random among those that can still advance, and that fluid invades the element with the
 smallest threshold on its perimeter: a site for `SitePercolation`, a bond and the site
@@ -20,6 +21,8 @@ heap 16 bytes per perimeter element.
   last column; `GrowingRight(L0)` moves the wall ahead of the front.
 - `periodic`, `species`, `seeds`, `layout`, `active_fraction`: as in `SOPModel`.
 - `nmax`: maximum number of invasions.
+- `trapping`: trap defender regions cut off from the outlet, as in `SOPModel`.
+  This is invasion percolation with trapping (Wilkinson & Willemsen 1983).
 """
 struct IPModel{L<:Lattice,P<:Percolation,B,S}
     lattice::L
@@ -31,15 +34,16 @@ struct IPModel{L<:Lattice,P<:Percolation,B,S}
     active_fraction::Float64
     nmax::Int
     layout::S
+    trapping::Bool
 end
 
 function IPModel(lattice::Lattice; percolation=BondPercolation(),
         right=FixedRight(default_length(lattice)), periodic=false, species=1, seeds=100,
-        active_fraction=1.0, nmax=typemax(Int), layout=RandomSeeds())
+        active_fraction=1.0, nmax=typemax(Int), layout=RandomSeeds(), trapping=false)
     check_injection(lattice, percolation, right, species, seeds, layout, active_fraction)
     nmax >= 0 || throw(ArgumentError("nmax must be non-negative"))
     return IPModel(lattice, percolation, right, periodic, species, seeds,
-        Float64(active_fraction), Int(nmax), layout)
+        Float64(active_fraction), Int(nmax), layout, Bool(trapping))
 end
 
 """
@@ -72,6 +76,8 @@ mutable struct IPState
     heaps::Vector{Vector{Threshold}}
     mass::Vector{Int}
     medium::Medium
+    active::Vector{Int}            # seeds that opened their perimeter
+    trap::Trapper                  # scratch space of the trapping rule
 end
 
 # Puts the empty neighbors of site `i` on the perimeter of species `s`. In site
@@ -93,7 +99,8 @@ function initial_state(m::IPModel, rng, medium::Medium, keep_times::Bool)
     st = IPState(zeros(UInt8, W * nx),
         m.percolation isa SitePercolation ? zeros(UInt8, W * nx) : UInt8[],
         keep_times ? fill(Int32(-1), W * nx) : Int32[],
-        nx, 0, [Threshold[] for _ in 1:m.species], fill(m.seeds, m.species), medium)
+        nx, 0, [Threshold[] for _ in 1:m.species], fill(m.seeds, m.species), medium,
+        Int[], Trapper(m.trapping ? W * nx : 0))
     wall = wall_order(m.layout, m, W, rng)
     for s in 1:m.species, n in 1:m.seeds
         site = wall[(s-1)*m.seeds+n]
@@ -103,7 +110,9 @@ function initial_state(m::IPModel, rng, medium::Medium, keep_times::Bool)
     # Perimeters only after every seed is placed, so no seed enters a heap.
     nactive = round(Int, m.active_fraction * m.seeds)
     for s in 1:m.species, n in 1:nactive
-        add_perimeter!(st, m, s, wall[(s-1)*m.seeds+n])
+        site = wall[(s-1)*m.seeds+n]
+        push!(st.active, site)
+        add_perimeter!(st, m, s, site)
     end
     return st
 end
@@ -161,6 +170,7 @@ function invade!(st::IPState, m::IPModel, rng, xs, who)
         st.xmax = max(st.xmax, col)
         xs === nothing || (push!(xs, x); push!(who, UInt8(s)))
         spans(m.right, st, col) && return :spanned
+        m.trapping && trap!(st.trap, st.sites, m.lattice, m.periodic, st.nx, j)
         add_perimeter!(st, m, s, j)
     end
     return :nmax
